@@ -18,6 +18,10 @@ config MICROCHIP_PFSOC
     select SIFIVE_PLIC
     select UNIMP
 
+config MTA1_MKDF
+    bool
+    select UNIMP
+
 config OPENTITAN
     bool
     select IBEX
