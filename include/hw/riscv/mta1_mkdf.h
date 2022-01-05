@@ -24,6 +24,9 @@
 #include "hw/boards.h"
 #include "hw/riscv/riscv_hart.h"
 #include "qom/object.h"
+#include "chardev/char-fe.h"
+
+#define MTA1_MKDF_RX_FIFO_SIZE 16
 
 typedef struct MTA1MKDFState {
     /*< private >*/
@@ -32,8 +35,12 @@ typedef struct MTA1MKDFState {
     /*< public >*/
     RISCVHartArrayState cpus;
     MemoryRegion rom;
-    MemoryRegion fifo;
-    //MemoryRegion htif; // XXX add for debug
+    MemoryRegion mmio;
+
+    CharBackend fifo_chr;
+    char *fifo_chr_name;
+    uint8_t fifo_rx[MTA1_MKDF_RX_FIFO_SIZE];
+    uint8_t fifo_rx_len;
 } MTA1MKDFState;
 
 #define TYPE_MTA1_MKDF_MACHINE MACHINE_TYPE_NAME("mta1_mkdf")
@@ -43,7 +50,7 @@ typedef struct MTA1MKDFState {
 enum {
     MTA1_MKDF_ROM,
     MTA1_MKDF_RAM,
-    MTA1_MKDF_FIFO,
+    MTA1_MKDF_MMIO,
 };
 
 #endif

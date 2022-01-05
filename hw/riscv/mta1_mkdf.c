@@ -29,11 +29,136 @@
 #include "sysemu/sysemu.h"
 #include "hw/riscv/mullvad_cpu.h"
 #include "hw/char/riscv_htif.h"
+#include "qapi/qmp/qerror.h"
+#include "qemu/log.h"
 
 static const MemMapEntry mta1_mkdf_memmap[] = {
     [MTA1_MKDF_ROM] =  {     0x1000, 0x20000 /*128K*/ },
     [MTA1_MKDF_RAM] =  { 0x80000000, 0x20000 },
-    [MTA1_MKDF_FIFO] = { 0x90000000, 0xf000 },
+    [MTA1_MKDF_MMIO] = { 0x90000000, 0x20000 },
+};
+
+enum {
+    MTA1_MKDF_MMIO_NAME0       = 0,
+    MTA1_MKDF_MMIO_NAME1       = 4,
+    MTA1_MKDF_MMIO_VERSION     = 8,
+    MTA1_MKDF_MMIO_FIFO_CAN_RX = 12,
+    MTA1_MKDF_MMIO_FIFO_RX     = 16,
+    MTA1_MKDF_MMIO_FIFO_CAN_TX = 20,
+    MTA1_MKDF_MMIO_FIFO_TX     = 24,
+};
+
+static bool mta1_mkdf_setup_chardev(MTA1MKDFState *s, Error **errp)
+{
+    Chardev *chr;
+
+    if (!s->fifo_chr_name) {
+        error_setg(errp, QERR_INVALID_PARAMETER_VALUE,
+                   "fifo", "a valid character device");
+        return false;
+    }
+
+    chr = qemu_chr_find(s->fifo_chr_name);
+    if (!chr) {
+        error_set(errp, ERROR_CLASS_DEVICE_NOT_FOUND,
+                  "Device '%s' not found", s->fifo_chr_name);
+        return false;
+    }
+
+    return qemu_chr_fe_init(&s->fifo_chr, chr, errp);
+}
+
+static void mta1_mkdf_fifo_rx(void *opaque, const uint8_t *buf, int size)
+{
+    MTA1MKDFState *s = opaque;
+
+    if (s->fifo_rx_len >= sizeof(s->fifo_rx)) {
+        qemu_log_mask(LOG_GUEST_ERROR, "%s: FIFO Rx dropped! size=%d\n", __func__, size);
+        return;
+    }
+    s->fifo_rx[s->fifo_rx_len++] = *buf;
+}
+
+static int mta1_mkdf_fifo_can_rx(void *opaque)
+{
+    MTA1MKDFState *s = opaque;
+
+    return s->fifo_rx_len < sizeof(s->fifo_rx);
+}
+
+static void mta1_mkdf_fifo_event(void *opaque, QEMUChrEvent event)
+{
+}
+
+static int mta1_mkdf_fifo_be_change(void *opaque)
+{
+    MTA1MKDFState *s = opaque;
+
+    qemu_chr_fe_set_handlers(&s->fifo_chr, mta1_mkdf_fifo_can_rx, mta1_mkdf_fifo_rx,
+                             mta1_mkdf_fifo_event, mta1_mkdf_fifo_be_change, s,
+                             NULL, true);
+
+    return 0;
+}
+
+
+static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
+{
+    MTA1MKDFState *s = opaque;
+    uint8_t c = val;
+
+    switch (addr) {
+    case MTA1_MKDF_MMIO_FIFO_TX:
+        qemu_chr_fe_write(&s->fifo_chr, &c, 1);
+        break;
+    }
+
+    qemu_log_mask(LOG_GUEST_ERROR, "%s: bad write: addr=0x%x v=0x%x\n", __func__, (int)addr, (int)val);
+}
+
+static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
+{
+    MTA1MKDFState *s = opaque;
+    uint8_t r;
+
+    switch (addr) {
+    case MTA1_MKDF_MMIO_NAME0:
+        return 0x6d746131; // "mta1"
+    case MTA1_MKDF_MMIO_NAME1:
+        return 0x6d6b6466; // "mkdf"
+    case MTA1_MKDF_MMIO_VERSION:
+        return 0x302e3031; // "0.01"
+    case MTA1_MKDF_MMIO_FIFO_CAN_RX:
+        return s->fifo_rx_len;
+    case MTA1_MKDF_MMIO_FIFO_RX:
+        if (s->fifo_rx_len) {
+            r = s->fifo_rx[0];
+            memmove(s->fifo_rx, s->fifo_rx + 1, s->fifo_rx_len - 1);
+            s->fifo_rx_len--;
+            qemu_chr_fe_accept_input(&s->fifo_chr);
+            return r;
+        }
+        return 0x80000000;
+    case MTA1_MKDF_MMIO_FIFO_CAN_TX:
+        return 1;
+    case MTA1_MKDF_MMIO_FIFO_TX:
+        break;
+    }
+
+    qemu_log_mask(LOG_GUEST_ERROR, "%s: bad read: addr=0x%x\n", __func__, (int)addr);
+    return 0;
+}
+
+static const MemoryRegionOps mta1_mkdf_mmio_ops = {
+    .read = mta1_mkdf_mmio_read,
+    .write = mta1_mkdf_mmio_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+#if 0
+    .impl = {
+        .min_access_size = 4,
+        .max_access_size = 4,
+    },
+#endif
 };
 
 static void mta1_mkdf_board_init(MachineState *machine)
@@ -42,6 +167,12 @@ static void mta1_mkdf_board_init(MachineState *machine)
     MTA1MKDFState *s = MTA1_MKDF_MACHINE(machine);
     const MemMapEntry *memmap = mta1_mkdf_memmap;
     MemoryRegion *sys_mem = get_system_memory();
+    Error *err = NULL;
+
+    if (!mta1_mkdf_setup_chardev(s, &err)) {
+        error_report_err(err);
+        exit(EXIT_FAILURE);
+    }
 
     if (machine->ram_size != mc->default_ram_size) {
         char *sz = size_to_str(mc->default_ram_size);
@@ -55,15 +186,25 @@ static void mta1_mkdf_board_init(MachineState *machine)
         exit(EXIT_FAILURE);
     }
 
+    qemu_chr_fe_set_handlers(&s->fifo_chr, mta1_mkdf_fifo_can_rx, mta1_mkdf_fifo_rx,
+                             mta1_mkdf_fifo_event, mta1_mkdf_fifo_be_change, s,
+                             NULL, true);
+
     object_initialize_child(OBJECT(machine), "soc", &s->cpus, TYPE_RISCV_HART_ARRAY);
     object_property_set_str(OBJECT(&s->cpus), "cpu-type", machine->cpu_type, &error_abort);
     object_property_set_int(OBJECT(&s->cpus), "num-harts", machine->smp.cpus, &error_abort);
-    object_property_set_int(OBJECT(&s->cpus), "resetvec", memmap[MTA1_MKDF_ROM].base, &error_abort); // XXX hardcode in cpu?
+    object_property_set_int(OBJECT(&s->cpus), "resetvec", memmap[MTA1_MKDF_ROM].base, &error_abort);
     sysbus_realize(SYS_BUS_DEVICE(&s->cpus), &error_abort);
 
     memory_region_init_rom(&s->rom, NULL, "riscv.mta1_mkdf.rom", memmap[MTA1_MKDF_ROM].size, &error_fatal);
     memory_region_add_subregion(sys_mem, memmap[MTA1_MKDF_ROM].base, &s->rom);
+
     memory_region_add_subregion(sys_mem, memmap[MTA1_MKDF_RAM].base, machine->ram);
+
+    memory_region_init_io(&s->mmio, OBJECT(s), &mta1_mkdf_mmio_ops, s, "riscv.mta1_mkdf.mmio",
+                          memmap[MTA1_MKDF_MMIO].size);
+    memory_region_add_subregion(sys_mem, memmap[MTA1_MKDF_MMIO].base, &s->mmio);
+    // sysbus_init_mmio(sbd, &s->mmio); // XXX add to sysbusdevice?
 
     if (!machine->firmware) {
         error_report("No firmware provided! Please use the -bios option.");
@@ -78,6 +219,35 @@ static void mta1_mkdf_machine_instance_init(Object *obj)
 {
 }
 
+static void mta1_mkdf_machine_set_chardev(Object *obj,
+                                    const char *value, Error **errp)
+{
+    MTA1MKDFState *s = MTA1_MKDF_MACHINE(obj);
+
+    g_free(s->fifo_chr_name);
+    s->fifo_chr_name = g_strdup(value);
+}
+
+static char * mta1_mkdf_machine_get_chardev(Object *obj, Error **errp)
+{
+    MTA1MKDFState *s = MTA1_MKDF_MACHINE(obj);
+    Chardev *chr = qemu_chr_fe_get_driver(&s->fifo_chr);
+
+    if (chr && chr->label) {
+        return g_strdup(chr->label);
+    }
+
+    return NULL;
+}
+
+static void mta1_mkdf_machine_instance_finalize(Object *obj)
+{
+    MTA1MKDFState *s = MTA1_MKDF_MACHINE(obj);
+
+    qemu_chr_fe_deinit(&s->fifo_chr, false);
+    g_free(s->fifo_chr_name);
+}
+
 static void mta1_mkdf_machine_class_init(ObjectClass *oc, void *data)
 {
     MachineClass *mc = MACHINE_CLASS(oc);
@@ -88,6 +258,11 @@ static void mta1_mkdf_machine_class_init(ObjectClass *oc, void *data)
     mc->default_cpu_type = MULLVAD_PICORV32_CPU;
     mc->default_ram_id = "riscv.mta1_mkdf.ram";
     mc->default_ram_size = mta1_mkdf_memmap[MTA1_MKDF_RAM].size;
+
+    object_class_property_add_str(oc, "fifo",
+                                  mta1_mkdf_machine_get_chardev,
+                                  mta1_mkdf_machine_set_chardev);
+
 }
 
 static const TypeInfo mta1_mkdf_machine_typeinfo = {
@@ -96,6 +271,7 @@ static const TypeInfo mta1_mkdf_machine_typeinfo = {
     .class_init = mta1_mkdf_machine_class_init,
     .instance_init = mta1_mkdf_machine_instance_init,
     .instance_size = sizeof(MTA1MKDFState),
+    .instance_finalize = mta1_mkdf_machine_instance_finalize,
 };
 
 static void mta1_mkdf_machine_init_register_types(void)
