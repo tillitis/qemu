@@ -39,13 +39,23 @@ static const MemMapEntry mta1_mkdf_memmap[] = {
 };
 
 enum {
-    MTA1_MKDF_MMIO_NAME0       = 0,
-    MTA1_MKDF_MMIO_NAME1       = 4,
-    MTA1_MKDF_MMIO_VERSION     = 8,
-    MTA1_MKDF_MMIO_FIFO_CAN_RX = 12,
-    MTA1_MKDF_MMIO_FIFO_RX     = 16,
-    MTA1_MKDF_MMIO_FIFO_CAN_TX = 20,
-    MTA1_MKDF_MMIO_FIFO_TX     = 24,
+    MTA1_MKDF_MMIO_UDS         = 0x0,
+    MTA1_MKDF_MMIO_UDA         = 0x20,
+    MTA1_MKDF_MMIO_UDI         = 0x200,
+    MTA1_MKDF_MMIO_NAME0       = 0x208,
+    MTA1_MKDF_MMIO_NAME1       = 0x20c,
+    MTA1_MKDF_MMIO_VERSION     = 0x210,
+    MTA1_MKDF_MMIO_FIFO_CAN_RX = 0x214,
+    MTA1_MKDF_MMIO_FIFO_RX     = 0x215,
+    MTA1_MKDF_MMIO_FIFO_CAN_TX = 0x216,
+    MTA1_MKDF_MMIO_FIFO_TX     = 0x217,
+    MTA1_MKDF_MMIO_LED         = 0x218,
+    MTA1_MKDF_MMIO_COUNTER     = 0x21c,
+    MTA1_MKDF_MMIO_TRNG_STATUS = 0x220,
+    MTA1_MKDF_MMIO_TRNG_DATA   = 0x224,
+    MTA1_MKDF_MMIO_CDI         = 0x400,
+    MTA1_MKDF_MMIO_APP_ADDR    = 0x420, /* 0x8000_0000 */
+    MTA1_MKDF_MMIO_APP_SIZE    = 0x424,
 };
 
 static bool mta1_mkdf_setup_chardev(MTA1MKDFState *s, Error **errp)
