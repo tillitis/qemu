@@ -41,6 +41,7 @@ static const MemMapEntry mta1_mkdf_memmap[] = {
 enum {
     MTA1_MKDF_MMIO_UDS         = 0x0,
     MTA1_MKDF_MMIO_UDA         = 0x20,
+    MTA1_MKDF_MMIO_SWITCH_APP  = 0x30,
     MTA1_MKDF_MMIO_UDI         = 0x200,
     MTA1_MKDF_MMIO_NAME0       = 0x208,
     MTA1_MKDF_MMIO_NAME1       = 0x20c,
@@ -117,12 +118,45 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
     MTA1MKDFState *s = opaque;
     uint8_t c = val;
 
+    /* CDI u8[32] */
+    if (addr >= MTA1_MKDF_MMIO_CDI && addr < MTA1_MKDF_MMIO_CDI + 32) {
+        if (s->app_mode) {
+            goto bad;
+        } else {
+            s->cdi[addr - MTA1_MKDF_MMIO_CDI] = val;
+        }
+    }
+
     switch (addr) {
+    case MTA1_MKDF_MMIO_SWITCH_APP:
+        if (val != 0) {
+            s->app_mode = true;
+            return;
+        }
+        break;
     case MTA1_MKDF_MMIO_FIFO_TX:
         qemu_chr_fe_write(&s->fifo_chr, &c, 1);
         break;
+    case MTA1_MKDF_MMIO_LED:
+        s->led = val;
+        return;
+    case MTA1_MKDF_MMIO_APP_ADDR:
+        if (s->app_mode) {
+            break;
+        } else {
+            s->app_addr = val;
+            return;
+        }
+    case MTA1_MKDF_MMIO_APP_SIZE:
+        if (s->app_mode) {
+            break;
+        } else {
+            s->app_size = val;
+            return;
+        }
     }
 
+bad:
     qemu_log_mask(LOG_GUEST_ERROR, "%s: bad write: addr=0x%x v=0x%x\n", __func__, (int)addr, (int)val);
 }
 
@@ -131,7 +165,42 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
     MTA1MKDFState *s = opaque;
     uint8_t r;
 
+    /* UDS u8[32] - starts at offset 0 */
+    if (addr < MTA1_MKDF_MMIO_UDS + 32) {
+        if (s->app_mode) {
+            goto bad;
+        } else {
+            int i = addr - MTA1_MKDF_MMIO_UDS;
+
+            // Should only be read once
+            if (s->block_uds[i]) {
+                goto bad;
+            } else {
+                s->block_uds[i] = true;
+                return s->uds[i];
+            }
+        }
+    }
+
+    /* UDA u8[16] */
+    if (addr >= MTA1_MKDF_MMIO_UDA && addr < MTA1_MKDF_MMIO_UDA + 16) {
+        if (s->app_mode) {
+            goto bad;
+        } else {
+            return s->uda[addr - MTA1_MKDF_MMIO_UDA];
+        }
+    }
+
+    /* CDI u8[32] */
+    if (addr >= MTA1_MKDF_MMIO_CDI && addr < MTA1_MKDF_MMIO_CDI + 32) {
+        return s->cdi[addr - MTA1_MKDF_MMIO_CDI];
+    }
+
     switch (addr) {
+    case MTA1_MKDF_MMIO_SWITCH_APP:
+        break;
+    case MTA1_MKDF_MMIO_UDI:
+        return 0xcafebabe;
     case MTA1_MKDF_MMIO_NAME0:
         return 0x6d746131; // "mta1"
     case MTA1_MKDF_MMIO_NAME1:
@@ -153,8 +222,21 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
         return 1;
     case MTA1_MKDF_MMIO_FIFO_TX:
         break;
+    case MTA1_MKDF_MMIO_LED:
+        return s->led;
+    case MTA1_MKDF_MMIO_COUNTER: // u32
+        break;
+    case MTA1_MKDF_MMIO_TRNG_STATUS: // u32
+        break;
+    case MTA1_MKDF_MMIO_TRNG_DATA: // u32
+        break;
+    case MTA1_MKDF_MMIO_APP_ADDR:
+        return s->app_addr;
+    case MTA1_MKDF_MMIO_APP_SIZE:
+        return s->app_size;
     }
 
+bad:
     qemu_log_mask(LOG_GUEST_ERROR, "%s: bad read: addr=0x%x\n", __func__, (int)addr);
     return 0;
 }
@@ -178,6 +260,13 @@ static void mta1_mkdf_board_init(MachineState *machine)
     const MemMapEntry *memmap = mta1_mkdf_memmap;
     MemoryRegion *sys_mem = get_system_memory();
     Error *err = NULL;
+
+    memcpy(s->uds, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 32);
+    for (int i = 0; i < 32; i ++) {
+        s->block_uds[i] = false;
+    }
+
+    memcpy(s->uda, "BBBBBBBBBBBBBBBB", 16);
 
     if (!mta1_mkdf_setup_chardev(s, &err)) {
         error_report_err(err);

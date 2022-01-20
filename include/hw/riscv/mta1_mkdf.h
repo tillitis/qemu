@@ -41,6 +41,14 @@ typedef struct MTA1MKDFState {
     char *fifo_chr_name;
     uint8_t fifo_rx[MTA1_MKDF_RX_FIFO_SIZE];
     uint8_t fifo_rx_len;
+    bool app_mode;
+    uint32_t app_addr;
+    uint32_t app_size;
+    uint8_t uds[32];
+    bool block_uds[32];
+    uint8_t uda[16];
+    uint32_t led;
+    uint8_t cdi[32];
 } MTA1MKDFState;
 
 #define TYPE_MTA1_MKDF_MACHINE MACHINE_TYPE_NAME("mta1_mkdf")
