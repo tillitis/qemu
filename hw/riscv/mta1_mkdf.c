@@ -206,7 +206,7 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
     case MTA1_MKDF_MMIO_NAME1:
         return 0x6d6b6466; // "mkdf"
     case MTA1_MKDF_MMIO_VERSION:
-        return 0x302e3031; // "0.01"
+        return 1;
     case MTA1_MKDF_MMIO_RX_FIFO_AVAIL:
         return s->fifo_rx_len;
     case MTA1_MKDF_MMIO_RX_FIFO:
