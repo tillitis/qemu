@@ -39,24 +39,24 @@ static const MemMapEntry mta1_mkdf_memmap[] = {
 };
 
 enum {
-    MTA1_MKDF_MMIO_UDS         = 0x0,
-    MTA1_MKDF_MMIO_UDA         = 0x20,
-    MTA1_MKDF_MMIO_SWITCH_APP  = 0x30,
-    MTA1_MKDF_MMIO_UDI         = 0x200,
-    MTA1_MKDF_MMIO_NAME0       = 0x208,
-    MTA1_MKDF_MMIO_NAME1       = 0x20c,
-    MTA1_MKDF_MMIO_VERSION     = 0x210,
-    MTA1_MKDF_MMIO_FIFO_CAN_RX = 0x214,
-    MTA1_MKDF_MMIO_FIFO_RX     = 0x215,
-    MTA1_MKDF_MMIO_FIFO_CAN_TX = 0x216,
-    MTA1_MKDF_MMIO_FIFO_TX     = 0x217,
-    MTA1_MKDF_MMIO_LED         = 0x218,
-    MTA1_MKDF_MMIO_COUNTER     = 0x21c,
-    MTA1_MKDF_MMIO_TRNG_STATUS = 0x220,
-    MTA1_MKDF_MMIO_TRNG_DATA   = 0x224,
-    MTA1_MKDF_MMIO_CDI         = 0x400,
-    MTA1_MKDF_MMIO_APP_ADDR    = 0x420, /* 0x8000_0000 */
-    MTA1_MKDF_MMIO_APP_SIZE    = 0x424,
+    MTA1_MKDF_MMIO_UDS           = 0x0,
+    MTA1_MKDF_MMIO_UDA           = 0x20,
+    MTA1_MKDF_MMIO_SWITCH_APP    = 0x30,
+    MTA1_MKDF_MMIO_UDI           = 0x200,
+    MTA1_MKDF_MMIO_NAME0         = 0x208,
+    MTA1_MKDF_MMIO_NAME1         = 0x20c,
+    MTA1_MKDF_MMIO_VERSION       = 0x210,
+    MTA1_MKDF_MMIO_RX_FIFO_AVAIL = 0x214,
+    MTA1_MKDF_MMIO_RX_FIFO       = 0x215,
+    MTA1_MKDF_MMIO_TX_FIFO_AVAIL = 0x216,
+    MTA1_MKDF_MMIO_TX_FIFO       = 0x217,
+    MTA1_MKDF_MMIO_LED           = 0x218,
+    MTA1_MKDF_MMIO_COUNTER       = 0x21c,
+    MTA1_MKDF_MMIO_TRNG_STATUS   = 0x220,
+    MTA1_MKDF_MMIO_TRNG_DATA     = 0x224,
+    MTA1_MKDF_MMIO_CDI           = 0x400,
+    MTA1_MKDF_MMIO_APP_ADDR      = 0x420, /* 0x8000_0000 */
+    MTA1_MKDF_MMIO_APP_SIZE      = 0x424,
 };
 
 static bool mta1_mkdf_setup_chardev(MTA1MKDFState *s, Error **errp)
@@ -134,7 +134,7 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
             return;
         }
         break;
-    case MTA1_MKDF_MMIO_FIFO_TX:
+    case MTA1_MKDF_MMIO_TX_FIFO:
         qemu_chr_fe_write(&s->fifo_chr, &c, 1);
         break;
     case MTA1_MKDF_MMIO_LED:
@@ -207,9 +207,9 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
         return 0x6d6b6466; // "mkdf"
     case MTA1_MKDF_MMIO_VERSION:
         return 0x302e3031; // "0.01"
-    case MTA1_MKDF_MMIO_FIFO_CAN_RX:
+    case MTA1_MKDF_MMIO_RX_FIFO_AVAIL:
         return s->fifo_rx_len;
-    case MTA1_MKDF_MMIO_FIFO_RX:
+    case MTA1_MKDF_MMIO_RX_FIFO:
         if (s->fifo_rx_len) {
             r = s->fifo_rx[0];
             memmove(s->fifo_rx, s->fifo_rx + 1, s->fifo_rx_len - 1);
@@ -218,9 +218,9 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
             return r;
         }
         return 0x80000000;
-    case MTA1_MKDF_MMIO_FIFO_CAN_TX:
+    case MTA1_MKDF_MMIO_TX_FIFO_AVAIL:
         return 1;
-    case MTA1_MKDF_MMIO_FIFO_TX:
+    case MTA1_MKDF_MMIO_TX_FIFO:
         break;
     case MTA1_MKDF_MMIO_LED:
         return s->led;
