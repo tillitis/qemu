@@ -267,12 +267,16 @@ static void mta1_mkdf_board_init(MachineState *machine)
     MemoryRegion *sys_mem = get_system_memory();
     Error *err = NULL;
 
-    memcpy(s->uds, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 32);
+    // Unique Device Secret
     for (int i = 0; i < 32; i ++) {
         s->block_uds[i] = false;
+        s->uds[i] = i;
     }
 
-    memcpy(s->uda, "BBBBBBBBBBBBBBBB", 16);
+    // Unique Device Authentication key
+    for (int i = 0; i < 16; i ++) {
+        s->uda[i] = i;
+    }
 
     if (!mta1_mkdf_setup_chardev(s, &err)) {
         error_report_err(err);
