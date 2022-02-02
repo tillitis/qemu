@@ -117,13 +117,14 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
 {
     MTA1MKDFState *s = opaque;
     uint8_t c = val;
+    hwaddr end = addr + size;
 
     /* CDI u8[32] */
-    if (addr >= MTA1_MKDF_MMIO_CDI && addr < MTA1_MKDF_MMIO_CDI + 32) {
+    if (addr >= MTA1_MKDF_MMIO_CDI && end <= MTA1_MKDF_MMIO_CDI + 32) {
         if (s->app_mode) {
             goto bad;
         } else {
-            s->cdi[addr - MTA1_MKDF_MMIO_CDI] = val;
+            memcpy(&s->cdi[addr - MTA1_MKDF_MMIO_CDI], &val, size);
         }
     }
 
@@ -164,9 +165,11 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
 {
     MTA1MKDFState *s = opaque;
     uint8_t r;
+    uint64_t val;
+    hwaddr end = addr + size;
 
     /* UDS u8[32] - starts at offset 0 */
-    if (addr < MTA1_MKDF_MMIO_UDS + 32) {
+    if (end <= MTA1_MKDF_MMIO_UDS + 32) {
         if (s->app_mode) {
             goto bad;
         } else {
@@ -176,24 +179,27 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
             if (s->block_uds[i]) {
                 goto bad;
             } else {
-                s->block_uds[i] = true;
-                return s->uds[i];
+                memset(&s->block_uds[i], true, size);
+                memcpy(&val, &s->uds[i], size);
+                return val;
             }
         }
     }
 
     /* UDA u8[16] */
-    if (addr >= MTA1_MKDF_MMIO_UDA && addr < MTA1_MKDF_MMIO_UDA + 16) {
+    if (addr >= MTA1_MKDF_MMIO_UDA && end <= MTA1_MKDF_MMIO_UDA + 16) {
         if (s->app_mode) {
             goto bad;
         } else {
-            return s->uda[addr - MTA1_MKDF_MMIO_UDA];
+            memcpy(&val, &s->uda[addr - MTA1_MKDF_MMIO_UDA], size);
+            return val;
         }
     }
 
     /* CDI u8[32] */
-    if (addr >= MTA1_MKDF_MMIO_CDI && addr < MTA1_MKDF_MMIO_CDI + 32) {
-        return s->cdi[addr - MTA1_MKDF_MMIO_CDI];
+    if (addr >= MTA1_MKDF_MMIO_CDI && end <= MTA1_MKDF_MMIO_CDI + 32) {
+        memcpy(&val, &s->cdi[addr - MTA1_MKDF_MMIO_CDI], size);
+        return val;
     }
 
     switch (addr) {
