@@ -57,6 +57,7 @@ enum {
     MTA1_MKDF_MMIO_CDI           = 0x400,
     MTA1_MKDF_MMIO_APP_ADDR      = 0x420, /* 0x8000_0000 */
     MTA1_MKDF_MMIO_APP_SIZE      = 0x424,
+    MTA1_MKDF_MMIO_DEBUG         = 0x1000,
 };
 
 static bool mta1_mkdf_setup_chardev(MTA1MKDFState *s, Error **errp)
@@ -155,6 +156,10 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
             s->app_size = val;
             return;
         }
+
+    case MTA1_MKDF_MMIO_DEBUG:
+        putchar(c);
+        break;
     }
 
 bad:
