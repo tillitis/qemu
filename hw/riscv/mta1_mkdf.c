@@ -165,7 +165,7 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
 {
     MTA1MKDFState *s = opaque;
     uint8_t r;
-    uint64_t val;
+    uint64_t val = 0;
     hwaddr end = addr + size;
 
     /* UDS u8[32] - starts at offset 0 */
