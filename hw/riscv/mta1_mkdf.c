@@ -325,7 +325,7 @@ static void mta1_mkdf_board_init(MachineState *machine)
         exit(EXIT_FAILURE);
     }
 
-    riscv_load_firmware(machine->firmware, memmap[MTA1_MKDF_RAM].base, htif_symbol_callback);
+    riscv_load_firmware(machine->firmware, memmap[MTA1_MKDF_ROM].base, htif_symbol_callback);
     htif_mm_init(sys_mem, &s->rom, &s->cpus.harts[0].env, serial_hd(0));
 }
 
