@@ -33,31 +33,12 @@
 #include "qemu/log.h"
 
 static const MemMapEntry mta1_mkdf_memmap[] = {
-    [MTA1_MKDF_ROM] =  {     0x1000, 0x20000 /*128K*/ },
-    [MTA1_MKDF_RAM] =  { 0x80000000, 0x20000 },
-    [MTA1_MKDF_MMIO] = { 0x90000000, 0x20000 },
-};
-
-enum {
-    MTA1_MKDF_MMIO_UDS           = 0x0,
-    MTA1_MKDF_MMIO_UDA           = 0x20,
-    MTA1_MKDF_MMIO_SWITCH_APP    = 0x30,
-    MTA1_MKDF_MMIO_UDI           = 0x200,
-    MTA1_MKDF_MMIO_NAME0         = 0x208,
-    MTA1_MKDF_MMIO_NAME1         = 0x20c,
-    MTA1_MKDF_MMIO_VERSION       = 0x210,
-    MTA1_MKDF_MMIO_RX_FIFO_AVAIL = 0x214,
-    MTA1_MKDF_MMIO_RX_FIFO       = 0x215,
-    MTA1_MKDF_MMIO_TX_FIFO_AVAIL = 0x216,
-    MTA1_MKDF_MMIO_TX_FIFO       = 0x217,
-    MTA1_MKDF_MMIO_LED           = 0x218,
-    MTA1_MKDF_MMIO_COUNTER       = 0x21c,
-    MTA1_MKDF_MMIO_TRNG_STATUS   = 0x220,
-    MTA1_MKDF_MMIO_TRNG_DATA     = 0x224,
-    MTA1_MKDF_MMIO_CDI           = 0x400,
-    MTA1_MKDF_MMIO_APP_ADDR      = 0x420, /* 0x8000_0000 */
-    MTA1_MKDF_MMIO_APP_SIZE      = 0x424,
-    MTA1_MKDF_MMIO_DEBUG         = 0x1000,
+    // TODO js said that currently ROM size is 2048 W32, and max is 3072 W32
+    // (8192 and 12288 bytes resp right).
+    [MTA1_MKDF_ROM]  = { MTA1_MKDF_ROM_BASE,  0x20000 /*128K*/ },
+    // js said that we will have 128 kByte RAM (2**15 W32).
+    [MTA1_MKDF_RAM]  = { MTA1_MKDF_RAM_BASE,  0x20000 /*128K*/ },
+    [MTA1_MKDF_MMIO] = { MTA1_MKDF_MMIO_BASE, MTA1_MKDF_MMIO_SIZE },
 };
 
 static bool mta1_mkdf_setup_chardev(MTA1MKDFState *s, Error **errp)
@@ -118,38 +99,40 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
 {
     MTA1MKDFState *s = opaque;
     uint8_t c = val;
+    // add base to make absolute
+    addr += MTA1_MKDF_MMIO_BASE;
     hwaddr end = addr + size;
 
     /* CDI u8[32] */
-    if (addr >= MTA1_MKDF_MMIO_CDI && end <= MTA1_MKDF_MMIO_CDI + 32) {
+    if (addr >= MTA1_MKDF_MMIO_QEMU_CDI && end <= MTA1_MKDF_MMIO_QEMU_CDI + 32) {
         if (s->app_mode) {
             goto bad;
         } else {
-            memcpy(&s->cdi[addr - MTA1_MKDF_MMIO_CDI], &val, size);
+            memcpy(&s->cdi[addr - MTA1_MKDF_MMIO_QEMU_CDI], &val, size);
         }
     }
 
     switch (addr) {
-    case MTA1_MKDF_MMIO_SWITCH_APP:
+    case MTA1_MKDF_MMIO_MTA1_SWITCH_APP:
         if (val != 0) {
             s->app_mode = true;
             return;
         }
         break;
-    case MTA1_MKDF_MMIO_TX_FIFO:
+    case MTA1_MKDF_MMIO_UART_TX_DATA:
         qemu_chr_fe_write(&s->fifo_chr, &c, 1);
         break;
-    case MTA1_MKDF_MMIO_LED:
+    case MTA1_MKDF_MMIO_MTA1_LED:
         s->led = val;
         return;
-    case MTA1_MKDF_MMIO_APP_ADDR:
+    case MTA1_MKDF_MMIO_MTA1_APP_ADDR:
         if (s->app_mode) {
             break;
         } else {
             s->app_addr = val;
             return;
         }
-    case MTA1_MKDF_MMIO_APP_SIZE:
+    case MTA1_MKDF_MMIO_MTA1_APP_SIZE:
         if (s->app_mode) {
             break;
         } else {
@@ -157,7 +140,7 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
             return;
         }
 
-    case MTA1_MKDF_MMIO_DEBUG:
+    case MTA1_MKDF_MMIO_QEMU_DEBUG:
         putchar(c);
         break;
     }
@@ -171,14 +154,16 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
     MTA1MKDFState *s = opaque;
     uint8_t r;
     uint64_t val = 0;
+    // add base to make absolute
+    addr += MTA1_MKDF_MMIO_BASE;
     hwaddr end = addr + size;
 
-    /* UDS u8[32] - starts at offset 0 */
-    if (end <= MTA1_MKDF_MMIO_UDS + 32) {
+    /* UDS u8[32] */
+    if (addr >= MTA1_MKDF_MMIO_UDS_START && end <= MTA1_MKDF_MMIO_UDS_START + 32) {
         if (s->app_mode) {
             goto bad;
         } else {
-            int i = addr - MTA1_MKDF_MMIO_UDS;
+            int i = addr - MTA1_MKDF_MMIO_UDS_START;
 
             // Should only be read once
             if (s->block_uds[i]) {
@@ -192,35 +177,35 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
     }
 
     /* UDA u8[16] */
-    if (addr >= MTA1_MKDF_MMIO_UDA && end <= MTA1_MKDF_MMIO_UDA + 16) {
+    if (addr >= MTA1_MKDF_MMIO_QEMU_UDA && end <= MTA1_MKDF_MMIO_QEMU_UDA + 16) {
         if (s->app_mode) {
             goto bad;
         } else {
-            memcpy(&val, &s->uda[addr - MTA1_MKDF_MMIO_UDA], size);
+            memcpy(&val, &s->uda[addr - MTA1_MKDF_MMIO_QEMU_UDA], size);
             return val;
         }
     }
 
     /* CDI u8[32] */
-    if (addr >= MTA1_MKDF_MMIO_CDI && end <= MTA1_MKDF_MMIO_CDI + 32) {
-        memcpy(&val, &s->cdi[addr - MTA1_MKDF_MMIO_CDI], size);
+    if (addr >= MTA1_MKDF_MMIO_QEMU_CDI && end <= MTA1_MKDF_MMIO_QEMU_CDI + 32) {
+        memcpy(&val, &s->cdi[addr - MTA1_MKDF_MMIO_QEMU_CDI], size);
         return val;
     }
 
     switch (addr) {
-    case MTA1_MKDF_MMIO_SWITCH_APP:
+    case MTA1_MKDF_MMIO_MTA1_SWITCH_APP:
         break;
-    case MTA1_MKDF_MMIO_UDI:
+    case MTA1_MKDF_MMIO_QEMU_UDI:
         return 0xcafebabe;
-    case MTA1_MKDF_MMIO_NAME0:
+    case MTA1_MKDF_MMIO_MTA1_NAME0:
         return 0x6d746131; // "mta1"
-    case MTA1_MKDF_MMIO_NAME1:
+    case MTA1_MKDF_MMIO_MTA1_NAME1:
         return 0x6d6b6466; // "mkdf"
-    case MTA1_MKDF_MMIO_VERSION:
+    case MTA1_MKDF_MMIO_MTA1_VERSION:
         return 1;
-    case MTA1_MKDF_MMIO_RX_FIFO_AVAIL:
+    case MTA1_MKDF_MMIO_UART_RX_STATUS:
         return s->fifo_rx_len;
-    case MTA1_MKDF_MMIO_RX_FIFO:
+    case MTA1_MKDF_MMIO_UART_RX_DATA:
         if (s->fifo_rx_len) {
             r = s->fifo_rx[0];
             memmove(s->fifo_rx, s->fifo_rx + 1, s->fifo_rx_len - 1);
@@ -228,22 +213,23 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
             qemu_chr_fe_accept_input(&s->fifo_chr);
             return r;
         }
+        // TODO what is this returning?!
         return 0x80000000;
-    case MTA1_MKDF_MMIO_TX_FIFO_AVAIL:
+    case MTA1_MKDF_MMIO_UART_TX_STATUS:
         return 1;
-    case MTA1_MKDF_MMIO_TX_FIFO:
+    case MTA1_MKDF_MMIO_UART_TX_DATA:
         break;
-    case MTA1_MKDF_MMIO_LED:
+    case MTA1_MKDF_MMIO_MTA1_LED:
         return s->led;
-    case MTA1_MKDF_MMIO_COUNTER: // u32
+    case MTA1_MKDF_MMIO_TIMER_TIMER: // u32
         break;
     case MTA1_MKDF_MMIO_TRNG_STATUS: // u32
         break;
-    case MTA1_MKDF_MMIO_TRNG_DATA: // u32
+    case MTA1_MKDF_MMIO_TRNG_ENTROPY: // u32
         break;
-    case MTA1_MKDF_MMIO_APP_ADDR:
+    case MTA1_MKDF_MMIO_MTA1_APP_ADDR:
         return s->app_addr;
-    case MTA1_MKDF_MMIO_APP_SIZE:
+    case MTA1_MKDF_MMIO_MTA1_APP_SIZE:
         return s->app_size;
     }
 

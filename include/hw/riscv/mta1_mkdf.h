@@ -26,6 +26,8 @@
 #include "qom/object.h"
 #include "chardev/char-fe.h"
 
+#include "hw/riscv/mta1_mkdf_mem.h"
+
 #define MTA1_MKDF_RX_FIFO_SIZE 16
 
 typedef struct MTA1MKDFState {
