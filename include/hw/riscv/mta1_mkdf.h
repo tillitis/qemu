@@ -46,11 +46,11 @@ typedef struct MTA1MKDFState {
     bool app_mode;
     uint32_t app_addr;
     uint32_t app_size;
-    uint8_t uds[32];
-    bool block_uds[32];
-    uint8_t uda[16];
+    uint32_t uds[8]; // 32 bytes
+    bool block_uds[8];
+    uint32_t uda[4]; // 16 bytes
     uint32_t led;
-    uint8_t cdi[32];
+    uint32_t cdi[8]; // 32 bytes
 } MTA1MKDFState;
 
 #define TYPE_MTA1_MKDF_MACHINE MACHINE_TYPE_NAME("mta1_mkdf")

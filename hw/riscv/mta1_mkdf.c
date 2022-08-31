@@ -101,14 +101,18 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
     uint8_t c = val;
     // add base to make absolute
     addr += MTA1_MKDF_MMIO_BASE;
-    hwaddr end = addr + size;
 
-    /* CDI u8[32] */
-    if (addr >= MTA1_MKDF_MMIO_QEMU_CDI && end <= MTA1_MKDF_MMIO_QEMU_CDI + 32) {
+    // Check for alignment
+    if (size != 4 || addr % 4 != 0) {
+        goto bad;
+    }
+
+    /* CDI u32[8] */
+    if (addr >= MTA1_MKDF_MMIO_MTA1_CDI_START && addr <= MTA1_MKDF_MMIO_MTA1_CDI_END) {
         if (s->app_mode) {
             goto bad;
         } else {
-            memcpy(&s->cdi[addr - MTA1_MKDF_MMIO_QEMU_CDI], &val, size);
+            s->cdi[(addr - MTA1_MKDF_MMIO_MTA1_CDI_START) / 4] = val;
         }
     }
 
@@ -153,43 +157,43 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
 {
     MTA1MKDFState *s = opaque;
     uint8_t r;
-    uint64_t val = 0;
     // add base to make absolute
     addr += MTA1_MKDF_MMIO_BASE;
-    hwaddr end = addr + size;
 
-    /* UDS u8[32] */
-    if (addr >= MTA1_MKDF_MMIO_UDS_START && end <= MTA1_MKDF_MMIO_UDS_START + 32) {
+    // Check for alignment
+    if (size != 4 || addr % 4 != 0) {
+        goto bad;
+    }
+
+    /* UDS 32 bytes */
+    if (addr >= MTA1_MKDF_MMIO_UDS_START && addr <= MTA1_MKDF_MMIO_UDS_END) {
         if (s->app_mode) {
             goto bad;
         } else {
-            int i = addr - MTA1_MKDF_MMIO_UDS_START;
+            int i = (addr - MTA1_MKDF_MMIO_UDS_START) / 4;
 
             // Should only be read once
             if (s->block_uds[i]) {
                 goto bad;
             } else {
-                memset(&s->block_uds[i], true, size);
-                memcpy(&val, &s->uds[i], size);
-                return val;
+                s->block_uds[i] = true;
+                return s->uds[i];
             }
         }
     }
 
-    /* UDA u8[16] */
-    if (addr >= MTA1_MKDF_MMIO_QEMU_UDA && end <= MTA1_MKDF_MMIO_QEMU_UDA + 16) {
+    /* UDA 16 bytes */
+    if (addr >= MTA1_MKDF_MMIO_QEMU_UDA && addr <= MTA1_MKDF_MMIO_QEMU_UDA) {
         if (s->app_mode) {
             goto bad;
         } else {
-            memcpy(&val, &s->uda[addr - MTA1_MKDF_MMIO_QEMU_UDA], size);
-            return val;
+            return s->uda[(addr - MTA1_MKDF_MMIO_QEMU_UDA) / 4];
         }
     }
 
-    /* CDI u8[32] */
-    if (addr >= MTA1_MKDF_MMIO_QEMU_CDI && end <= MTA1_MKDF_MMIO_QEMU_CDI + 32) {
-        memcpy(&val, &s->cdi[addr - MTA1_MKDF_MMIO_QEMU_CDI], size);
-        return val;
+    /* CDI 32 bytes */
+    if (addr >= MTA1_MKDF_MMIO_MTA1_CDI_START && addr <= MTA1_MKDF_MMIO_MTA1_CDI_END) {
+        return s->cdi[(addr - MTA1_MKDF_MMIO_MTA1_CDI_START) / 4];
     }
 
     switch (addr) {
@@ -259,13 +263,13 @@ static void mta1_mkdf_board_init(MachineState *machine)
     Error *err = NULL;
 
     // Unique Device Secret
-    for (int i = 0; i < 32; i ++) {
+    for (int i = 0; i < 8; i ++) {
         s->block_uds[i] = false;
         s->uds[i] = i;
     }
 
     // Unique Device Authentication key
-    for (int i = 0; i < 16; i ++) {
+    for (int i = 0; i < 4; i ++) {
         s->uda[i] = i;
     }
 
