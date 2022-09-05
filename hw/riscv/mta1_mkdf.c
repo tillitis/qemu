@@ -116,9 +116,9 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
     if (addr >= MTA1_MKDF_MMIO_MTA1_CDI_START && addr <= MTA1_MKDF_MMIO_MTA1_CDI_END) {
         if (s->app_mode) {
             goto bad;
-        } else {
-            s->cdi[(addr - MTA1_MKDF_MMIO_MTA1_CDI_START) / 4] = val;
         }
+        s->cdi[(addr - MTA1_MKDF_MMIO_MTA1_CDI_START) / 4] = val;
+        return;
     }
 
     switch (addr) {
@@ -170,26 +170,23 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
     if (addr >= MTA1_MKDF_MMIO_UDS_START && addr <= MTA1_MKDF_MMIO_UDS_END) {
         if (s->app_mode) {
             goto bad;
-        } else {
-            int i = (addr - MTA1_MKDF_MMIO_UDS_START) / 4;
-
-            // Should only be read once
-            if (s->block_uds[i]) {
-                goto bad;
-            } else {
-                s->block_uds[i] = true;
-                return s->uds[i];
-            }
         }
+        int i = (addr - MTA1_MKDF_MMIO_UDS_START) / 4;
+        // Should only be read once
+        if (s->block_uds[i]) {
+            badmsg = "read from UDS twice";
+            goto bad;
+        }
+        s->block_uds[i] = true;
+        return s->uds[i];
     }
 
     /* UDA 16 bytes */
     if (addr >= MTA1_MKDF_MMIO_QEMU_UDA && addr <= MTA1_MKDF_MMIO_QEMU_UDA) {
         if (s->app_mode) {
             goto bad;
-        } else {
-            return s->uda[(addr - MTA1_MKDF_MMIO_QEMU_UDA) / 4];
         }
+        return s->uda[(addr - MTA1_MKDF_MMIO_QEMU_UDA) / 4];
     }
 
     /* CDI 32 bytes */
