@@ -132,11 +132,16 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
 
     switch (addr) {
     case MTA1_MKDF_MMIO_MTA1_SWITCH_APP:
-        if (val != 0) {
-            s->app_mode = true;
-            return;
+        if (s->app_mode) {
+            badmsg = "write to SWITCH_APP in app-mode";
+            goto bad;
         }
-        break;
+        if (val == 0) {
+            badmsg = "write 0 to SWITCH_APP";
+            goto bad;
+        }
+        s->app_mode = true;
+        return;
     case MTA1_MKDF_MMIO_UART_TX_DATA:
         qemu_chr_fe_write(&s->fifo_chr, &c, 1);
         return;
@@ -145,18 +150,18 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
         return;
     case MTA1_MKDF_MMIO_MTA1_APP_ADDR:
         if (s->app_mode) {
-            break;
-        } else {
-            s->app_addr = val;
-            return;
+            badmsg = "write to APP_ADDR in app-mode";
+            goto bad;
         }
+        s->app_addr = val;
+        return;
     case MTA1_MKDF_MMIO_MTA1_APP_SIZE:
         if (s->app_mode) {
-            break;
-        } else {
-            s->app_size = val;
-            return;
+            badmsg = "write to APP_SIZE in app-mode";
+            goto bad;
         }
+        s->app_size = val;
+        return;
     }
 
     badmsg = "addr/val/state not handled";
@@ -218,7 +223,8 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
 
     switch (addr) {
     case MTA1_MKDF_MMIO_MTA1_SWITCH_APP:
-        break;
+        badmsg = "read from SWITCH_APP";
+        goto bad;
     case MTA1_MKDF_MMIO_QEMU_UDI:
         return 0xcafebabe;
     case MTA1_MKDF_MMIO_MTA1_NAME0:
@@ -242,7 +248,8 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
     case MTA1_MKDF_MMIO_UART_TX_STATUS:
         return 1;
     case MTA1_MKDF_MMIO_UART_TX_DATA:
-        break;
+        badmsg = "read from TX_DATA";
+        goto bad;
     case MTA1_MKDF_MMIO_MTA1_LED:
         return s->led;
     case MTA1_MKDF_MMIO_TIMER_TIMER: // u32
