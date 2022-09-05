@@ -102,6 +102,11 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
     // add base to make absolute
     addr += MTA1_MKDF_MMIO_BASE;
 
+    if (addr == MTA1_MKDF_MMIO_QEMU_DEBUG) {
+        putchar(c);
+        return;
+    }
+
     // Check for alignment
     if (size != 4 || addr % 4 != 0) {
         goto bad;
@@ -143,10 +148,6 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
             s->app_size = val;
             return;
         }
-
-    case MTA1_MKDF_MMIO_QEMU_DEBUG:
-        putchar(c);
-        break;
     }
 
 bad:
