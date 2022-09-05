@@ -99,6 +99,8 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
 {
     MTA1MKDFState *s = opaque;
     uint8_t c = val;
+    const char *badmsg = "";
+
     // add base to make absolute
     addr += MTA1_MKDF_MMIO_BASE;
 
@@ -107,14 +109,21 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
         return;
     }
 
+    // Check size
+    if (size != 4) {
+        badmsg = "size not 32 bits";
+        goto bad;
+    }
     // Check for alignment
-    if (size != 4 || addr % 4 != 0) {
+    if (addr % 4 != 0) {
+        badmsg = "addr not 32-bit aligned";
         goto bad;
     }
 
     /* CDI u32[8] */
     if (addr >= MTA1_MKDF_MMIO_MTA1_CDI_START && addr <= MTA1_MKDF_MMIO_MTA1_CDI_END) {
         if (s->app_mode) {
+            badmsg = "write to CDI in app-mode";
             goto bad;
         }
         s->cdi[(addr - MTA1_MKDF_MMIO_MTA1_CDI_START) / 4] = val;
@@ -150,25 +159,37 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
         }
     }
 
+    badmsg = "addr/val/state not handled";
+
 bad:
-    qemu_log_mask(LOG_GUEST_ERROR, "%s: bad write: addr=0x%x v=0x%x\n", __func__, (int)addr, (int)val);
+    qemu_log_mask(LOG_GUEST_ERROR, "%s: bad write: addr=0x%x size=%d val=0x%x msg='%s'\n",
+                  __func__, (int)addr, size, (int)val, badmsg);
 }
 
 static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
 {
     MTA1MKDFState *s = opaque;
     uint8_t r;
+    const char *badmsg = "";
+
     // add base to make absolute
     addr += MTA1_MKDF_MMIO_BASE;
 
+    // Check size
+    if (size != 4) {
+        badmsg = "size not 32 bits";
+        goto bad;
+    }
     // Check for alignment
-    if (size != 4 || addr % 4 != 0) {
+    if (addr % 4 != 0) {
+        badmsg = "addr not 32-bit aligned";
         goto bad;
     }
 
     /* UDS 32 bytes */
     if (addr >= MTA1_MKDF_MMIO_UDS_START && addr <= MTA1_MKDF_MMIO_UDS_END) {
         if (s->app_mode) {
+            badmsg = "read from UDS in app-mode";
             goto bad;
         }
         int i = (addr - MTA1_MKDF_MMIO_UDS_START) / 4;
@@ -184,6 +205,7 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
     /* UDA 16 bytes */
     if (addr >= MTA1_MKDF_MMIO_QEMU_UDA && addr <= MTA1_MKDF_MMIO_QEMU_UDA) {
         if (s->app_mode) {
+            badmsg = "read from UDA in app-mode";
             goto bad;
         }
         return s->uda[(addr - MTA1_MKDF_MMIO_QEMU_UDA) / 4];
@@ -235,8 +257,11 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
         return s->app_size;
     }
 
+    badmsg = "addr/val/state not handled";
+
 bad:
-    qemu_log_mask(LOG_GUEST_ERROR, "%s: bad read: addr=0x%x\n", __func__, (int)addr);
+    qemu_log_mask(LOG_GUEST_ERROR, "%s: bad read: addr=0x%x size=%d msg='%s'\n",
+                  __func__, (int)addr, size, badmsg);
     return 0;
 }
 
