@@ -139,7 +139,7 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
         break;
     case MTA1_MKDF_MMIO_UART_TX_DATA:
         qemu_chr_fe_write(&s->fifo_chr, &c, 1);
-        break;
+        return;
     case MTA1_MKDF_MMIO_MTA1_LED:
         s->led = val;
         return;
