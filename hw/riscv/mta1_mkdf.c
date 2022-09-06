@@ -35,10 +35,11 @@
 static const MemMapEntry mta1_mkdf_memmap[] = {
     // TODO js said that currently ROM size is 2048 W32, and max is 3072 W32
     // (8192 and 12288 bytes resp right).
-    [MTA1_MKDF_ROM]  = { MTA1_MKDF_ROM_BASE,  0x20000 /*128K*/ },
+    [MTA1_MKDF_ROM]      = { MTA1_MKDF_ROM_BASE,  0x20000 /*128K*/ },
     // js said that we will have 128 kByte RAM (2**15 W32).
-    [MTA1_MKDF_RAM]  = { MTA1_MKDF_RAM_BASE,  0x20000 /*128K*/ },
-    [MTA1_MKDF_MMIO] = { MTA1_MKDF_MMIO_BASE, MTA1_MKDF_MMIO_SIZE },
+    [MTA1_MKDF_RAM]      = { MTA1_MKDF_RAM_BASE,  0x20000 /*128K*/ },
+    [MTA1_MKDF_RESERVED] = { MTA1_MKDF_RESERVED_BASE, MTA1_MKDF_RESERVED_SIZE },
+    [MTA1_MKDF_MMIO]     = { MTA1_MKDF_MMIO_BASE, MTA1_MKDF_MMIO_SIZE },
 };
 
 static bool mta1_mkdf_setup_chardev(MTA1MKDFState *s, Error **errp)
@@ -311,6 +312,31 @@ static const MemoryRegionOps mta1_mkdf_mmio_ops = {
 #endif
 };
 
+static void mta1_mkdf_reserved_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
+{
+    // add base to make absolute
+    addr += MTA1_MKDF_RESERVED_BASE;
+
+    qemu_log_mask(LOG_GUEST_ERROR, "%s: bad write: addr=0x%x size=%d val=0x%x msg='write to reserved area'\n",
+                  __func__, (int)addr, size, (int)val);
+}
+
+static uint64_t mta1_mkdf_reserved_read(void *opaque, hwaddr addr, unsigned size)
+{
+    // add base to make absolute
+    addr += MTA1_MKDF_RESERVED_BASE;
+
+    qemu_log_mask(LOG_GUEST_ERROR, "%s: bad read: addr=0x%x size=%d msg='read from reserved area'\n",
+                  __func__, (int)addr, size);
+    return 0;
+}
+
+static const MemoryRegionOps mta1_mkdf_reserved_ops = {
+    .read = mta1_mkdf_reserved_read,
+    .write = mta1_mkdf_reserved_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+};
+
 static void mta1_mkdf_board_init(MachineState *machine)
 {
     MachineClass *mc = MACHINE_GET_CLASS(machine);
@@ -382,6 +408,10 @@ static void mta1_mkdf_board_init(MachineState *machine)
                           memmap[MTA1_MKDF_MMIO].size);
     memory_region_add_subregion(sys_mem, memmap[MTA1_MKDF_MMIO].base, &s->mmio);
     // sysbus_init_mmio(sbd, &s->mmio); // XXX add to sysbusdevice?
+
+    memory_region_init_io(&s->reserved, OBJECT(s), &mta1_mkdf_reserved_ops, s, "riscv.mta1_mkdf.reserved",
+                          memmap[MTA1_MKDF_RESERVED].size);
+    memory_region_add_subregion(sys_mem, memmap[MTA1_MKDF_RESERVED].base, &s->reserved);
 
     if (!machine->firmware) {
         error_report("No firmware provided! Please use the -bios option.");

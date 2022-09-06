@@ -37,6 +37,7 @@ typedef struct MTA1MKDFState {
     /*< public >*/
     RISCVHartArrayState cpus;
     MemoryRegion rom;
+    MemoryRegion reserved;
     MemoryRegion mmio;
 
     CharBackend fifo_chr;
@@ -61,6 +62,7 @@ typedef struct MTA1MKDFState {
 enum {
     MTA1_MKDF_ROM,
     MTA1_MKDF_RAM,
+    MTA1_MKDF_RESERVED,
     MTA1_MKDF_MMIO,
 };
 
