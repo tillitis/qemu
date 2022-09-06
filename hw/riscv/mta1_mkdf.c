@@ -130,15 +130,17 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
         return;
     }
 
+    badmsg = "addr/val/state not handled";
+
     switch (addr) {
     case MTA1_MKDF_MMIO_MTA1_SWITCH_APP:
         if (s->app_mode) {
             badmsg = "write to SWITCH_APP in app-mode";
-            goto bad;
+            break;
         }
         if (val == 0) {
             badmsg = "write 0 to SWITCH_APP";
-            goto bad;
+            break;
         }
         s->app_mode = true;
         return;
@@ -151,20 +153,18 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
     case MTA1_MKDF_MMIO_MTA1_APP_ADDR:
         if (s->app_mode) {
             badmsg = "write to APP_ADDR in app-mode";
-            goto bad;
+            break;
         }
         s->app_addr = val;
         return;
     case MTA1_MKDF_MMIO_MTA1_APP_SIZE:
         if (s->app_mode) {
             badmsg = "write to APP_SIZE in app-mode";
-            goto bad;
+            break;
         }
         s->app_size = val;
         return;
     }
-
-    badmsg = "addr/val/state not handled";
 
 bad:
     qemu_log_mask(LOG_GUEST_ERROR, "%s: bad write: addr=0x%x size=%d val=0x%x msg='%s'\n",
@@ -221,10 +221,12 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
         return s->cdi[(addr - MTA1_MKDF_MMIO_MTA1_CDI_START) / 4];
     }
 
+    badmsg = "addr/val/state not handled";
+
     switch (addr) {
     case MTA1_MKDF_MMIO_MTA1_SWITCH_APP:
         badmsg = "read from SWITCH_APP";
-        goto bad;
+        break;
     case MTA1_MKDF_MMIO_QEMU_UDI:
         return 0xcafebabe;
     case MTA1_MKDF_MMIO_MTA1_NAME0:
@@ -249,7 +251,7 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
         return 1;
     case MTA1_MKDF_MMIO_UART_TX_DATA:
         badmsg = "read from TX_DATA";
-        goto bad;
+        break;
     case MTA1_MKDF_MMIO_MTA1_LED:
         return s->led;
     case MTA1_MKDF_MMIO_TIMER_TIMER: // u32
@@ -263,8 +265,6 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
     case MTA1_MKDF_MMIO_MTA1_APP_SIZE:
         return s->app_size;
     }
-
-    badmsg = "addr/val/state not handled";
 
 bad:
     qemu_log_mask(LOG_GUEST_ERROR, "%s: bad read: addr=0x%x size=%d msg='%s'\n",
