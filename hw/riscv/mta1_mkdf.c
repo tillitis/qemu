@@ -208,6 +208,8 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
     }
 
     /* UDA 16 bytes */
+    // TODO: temp UDA only has 1 address so it is only 1 word (4 bytes). Real
+    // has 4 addrs, so 4 words (16 bytes).
     if (addr >= MTA1_MKDF_MMIO_QEMU_UDA && addr <= MTA1_MKDF_MMIO_QEMU_UDA) {
         if (s->app_mode) {
             badmsg = "read from UDA in app-mode";
@@ -295,12 +297,12 @@ static void mta1_mkdf_board_init(MachineState *machine)
     // Unique Device Secret
     for (int i = 0; i < 8; i ++) {
         s->block_uds[i] = false;
-        s->uds[i] = i;
+        s->uds[i] = i+1;
     }
 
     // Unique Device Authentication key
     for (int i = 0; i < 4; i ++) {
-        s->uda[i] = i;
+        s->uda[i] = i+1;
     }
 
     if (!mta1_mkdf_setup_chardev(s, &err)) {
