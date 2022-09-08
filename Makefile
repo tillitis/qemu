@@ -337,3 +337,8 @@ endif
 
 print-%:
 	@echo '$*=$($*)'
+
+
+.PHONY: update-mem-include
+update-mem-include:
+	cp -af ../mta1_mkdf/hw/application_fpga/mta1_mkdf_mem.h include/hw/riscv/mta1_mkdf_mem.h

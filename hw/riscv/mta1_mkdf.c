@@ -121,12 +121,12 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
     }
 
     /* CDI u32[8] */
-    if (addr >= MTA1_MKDF_MMIO_MTA1_CDI_START && addr <= MTA1_MKDF_MMIO_MTA1_CDI_END) {
+    if (addr >= MTA1_MKDF_MMIO_MTA1_CDI_FIRST && addr <= MTA1_MKDF_MMIO_MTA1_CDI_LAST) {
         if (s->app_mode) {
             badmsg = "write to CDI in app-mode";
             goto bad;
         }
-        s->cdi[(addr - MTA1_MKDF_MMIO_MTA1_CDI_START) / 4] = val;
+        s->cdi[(addr - MTA1_MKDF_MMIO_MTA1_CDI_FIRST) / 4] = val;
         return;
     }
 
@@ -192,12 +192,12 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
     }
 
     /* UDS 32 bytes */
-    if (addr >= MTA1_MKDF_MMIO_UDS_START && addr <= MTA1_MKDF_MMIO_UDS_END) {
+    if (addr >= MTA1_MKDF_MMIO_UDS_FIRST && addr <= MTA1_MKDF_MMIO_UDS_LAST) {
         if (s->app_mode) {
             badmsg = "read from UDS in app-mode";
             goto bad;
         }
-        int i = (addr - MTA1_MKDF_MMIO_UDS_START) / 4;
+        int i = (addr - MTA1_MKDF_MMIO_UDS_FIRST) / 4;
         // Should only be read once
         if (s->block_uds[i]) {
             badmsg = "read from UDS twice";
@@ -219,8 +219,8 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
     }
 
     /* CDI 32 bytes */
-    if (addr >= MTA1_MKDF_MMIO_MTA1_CDI_START && addr <= MTA1_MKDF_MMIO_MTA1_CDI_END) {
-        return s->cdi[(addr - MTA1_MKDF_MMIO_MTA1_CDI_START) / 4];
+    if (addr >= MTA1_MKDF_MMIO_MTA1_CDI_FIRST && addr <= MTA1_MKDF_MMIO_MTA1_CDI_LAST) {
+        return s->cdi[(addr - MTA1_MKDF_MMIO_MTA1_CDI_FIRST) / 4];
     }
 
     badmsg = "addr/val/state not handled";
