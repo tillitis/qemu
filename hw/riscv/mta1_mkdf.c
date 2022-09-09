@@ -162,6 +162,9 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
     case MTA1_MKDF_MMIO_MTA1_LED:
         s->led = val;
         return;
+    case MTA1_MKDF_MMIO_TOUCH_STATUS:
+        // Always touched, we don't care about touch reset
+        return;
     case MTA1_MKDF_MMIO_MTA1_APP_ADDR:
         if (s->app_mode) {
             badmsg = "write to APP_ADDR in app-mode";
@@ -277,6 +280,9 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
         break;
     case MTA1_MKDF_MMIO_TRNG_ENTROPY: // u32
         break;
+    case MTA1_MKDF_MMIO_TOUCH_STATUS:
+        // Always touched
+        return 1 << MTA1_MKDF_MMIO_TOUCH_STATUS_EVENT_BIT;
     case MTA1_MKDF_MMIO_MTA1_APP_ADDR:
         return s->app_addr;
     case MTA1_MKDF_MMIO_MTA1_APP_SIZE:
