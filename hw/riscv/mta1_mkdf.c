@@ -120,6 +120,22 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
         goto bad;
     }
 
+    // Handle some read-only addresses first
+    if (addr >= MTA1_MKDF_MMIO_UDS_FIRST && addr <= MTA1_MKDF_MMIO_UDS_LAST) {
+        badmsg = "write to UDS";
+        goto bad;
+    }
+    // TODO: temp UDA only has 1 address so it is only 1 word (4 bytes). Real
+    // has 4 addrs, so 4 words (16 bytes).
+    if (addr >= MTA1_MKDF_MMIO_QEMU_UDA && addr <= MTA1_MKDF_MMIO_QEMU_UDA) {
+        badmsg = "write to UDA";
+        goto bad;
+    }
+    if (addr >= MTA1_MKDF_MMIO_MTA1_UDI_FIRST && addr <= MTA1_MKDF_MMIO_MTA1_UDI_LAST) {
+        badmsg = "write to UDI";
+        goto bad;
+    }
+
     /* CDI u32[8] */
     if (addr >= MTA1_MKDF_MMIO_MTA1_CDI_FIRST && addr <= MTA1_MKDF_MMIO_MTA1_CDI_LAST) {
         if (s->app_mode) {
@@ -223,14 +239,17 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
         return s->cdi[(addr - MTA1_MKDF_MMIO_MTA1_CDI_FIRST) / 4];
     }
 
+    /* UDI 8 bytes */
+    if (addr >= MTA1_MKDF_MMIO_MTA1_UDI_FIRST && addr <= MTA1_MKDF_MMIO_MTA1_UDI_LAST) {
+        return s->udi[(addr - MTA1_MKDF_MMIO_MTA1_UDI_FIRST) / 4];
+    }
+
     badmsg = "addr/val/state not handled";
 
     switch (addr) {
     case MTA1_MKDF_MMIO_MTA1_SWITCH_APP:
         badmsg = "read from SWITCH_APP";
         break;
-    case MTA1_MKDF_MMIO_QEMU_UDI:
-        return 0xcafebabe;
     case MTA1_MKDF_MMIO_MTA1_NAME0:
         return 0x6d746131; // "mta1"
     case MTA1_MKDF_MMIO_MTA1_NAME1:
@@ -303,6 +322,11 @@ static void mta1_mkdf_board_init(MachineState *machine)
     // Unique Device Authentication key
     for (int i = 0; i < 4; i ++) {
         s->uda[i] = i+1;
+    }
+
+    // Unique Device ID
+    for (int i = 0; i < 2; i ++) {
+        s->udi[i] = i+1;
     }
 
     if (!mta1_mkdf_setup_chardev(s, &err)) {
