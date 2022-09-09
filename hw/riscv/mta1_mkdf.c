@@ -154,10 +154,6 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
             badmsg = "write to SWITCH_APP in app-mode";
             break;
         }
-        if (val == 0) {
-            badmsg = "write 0 to SWITCH_APP";
-            break;
-        }
         s->app_mode = true;
         return;
     case MTA1_MKDF_MMIO_UART_TX_DATA:
