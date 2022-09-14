@@ -316,9 +316,20 @@ static void mta1_mkdf_board_init(MachineState *machine)
     Error *err = NULL;
 
     // Unique Device Secret
+    uint32_t uds[8] = {
+        0x80808080,
+        0x91919191,
+        0xa2a2a2a2,
+        0xb3b3b3b3,
+        0xc4c4c4c4,
+        0xd5d5d5d5,
+        0xe6e6e6e6,
+        0xf7f7f7f7
+    };
+
+    memcpy(s->uds, uds, 32);
     for (int i = 0; i < 8; i ++) {
         s->block_uds[i] = false;
-        s->uds[i] = i+1;
     }
 
     // Unique Device Authentication key
