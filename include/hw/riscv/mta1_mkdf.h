@@ -28,6 +28,8 @@
 
 #include "hw/riscv/mta1_mkdf_mem.h"
 
+// 18 MHz
+#define MTA1_MKDF_CLOCK_FREQ 18000000
 #define MTA1_MKDF_RX_FIFO_SIZE 16
 
 typedef struct MTA1MKDFState {
@@ -38,6 +40,8 @@ typedef struct MTA1MKDFState {
     RISCVHartArrayState cpus;
     MemoryRegion rom;
     MemoryRegion mmio;
+
+    QEMUTimer *qtimer;
 
     CharBackend fifo_chr;
     char *fifo_chr_name;
@@ -53,6 +57,10 @@ typedef struct MTA1MKDFState {
     uint32_t cdi[8]; // 32 bytes
     uint32_t udi[2]; // 8 bytes
     uint8_t fw_ram[MTA1_MKDF_MMIO_FW_RAM_SIZE];
+    uint32_t timer;
+    uint32_t timer_prescaler;
+    bool timer_running;
+    uint32_t timer_interval;
 } MTA1MKDFState;
 
 #define TYPE_MTA1_MKDF_MACHINE MACHINE_TYPE_NAME("mta1_mkdf")
