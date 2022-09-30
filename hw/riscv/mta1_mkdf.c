@@ -194,6 +194,29 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
         }
         s->app_size = val;
         return;
+    case MTA1_MKDF_MMIO_TIMER_TIMER:
+        s->timer = val;
+        return;
+    case MTA1_MKDF_MMIO_TIMER_CTRL:
+        // Toggle timer
+        if (s->timer_running) {
+            // Stop
+            s->timer_running = false;
+        } else {
+            // Start and schedule next tick
+            s->timer_running = true;
+            timer_mod(s->qtimer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + s->timer_interval);
+        }
+        break;
+    case MTA1_MKDF_MMIO_TIMER_PRESCALER:
+        s->timer_prescaler = val;
+        if (s->timer_prescaler == 0) {
+            s->timer_interval = NANOSECONDS_PER_SECOND / MTA1_MKDF_CLOCK_FREQ;
+        } else {
+            s->timer_interval = s->timer_prescaler * NANOSECONDS_PER_SECOND / MTA1_MKDF_CLOCK_FREQ;
+        }
+
+        break;
     }
 
 bad:
@@ -302,6 +325,15 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
     case MTA1_MKDF_MMIO_MTA1_LED:
         return s->led;
     case MTA1_MKDF_MMIO_TIMER_TIMER: // u32
+        return s->timer;
+    case MTA1_MKDF_MMIO_TIMER_PRESCALER:
+        return s->timer_prescaler;
+    case MTA1_MKDF_MMIO_TIMER_STATUS:
+        if (s->timer_running) {
+            return 0 << MTA1_MKDF_MMIO_TIMER_STATUS_READY_BIT;
+        } else {
+            return 1 << MTA1_MKDF_MMIO_TIMER_STATUS_READY_BIT;
+        }
         break;
     case MTA1_MKDF_MMIO_TRNG_STATUS: // u32
         break;
@@ -334,6 +366,24 @@ static const MemoryRegionOps mta1_mkdf_mmio_ops = {
 #endif
 };
 
+static void mta1_mkdf_timer_tick(void *opaque)
+{
+    MTA1MKDFState *s = (MTA1MKDFState *) opaque;
+
+    if (!s->timer_running) {
+        // Timer was turned off. Do not schedule any more ticks.
+        return;
+    }
+    s->timer --;
+    if (s->timer == 0) {
+        // Timer expired
+        s->timer_running = false;
+    } else {
+        // Schedule next tick
+        timer_mod(s->qtimer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + s->timer_interval);
+    }
+}
+
 static void mta1_mkdf_board_init(MachineState *machine)
 {
     MachineClass *mc = MACHINE_GET_CLASS(machine);
@@ -341,6 +391,14 @@ static void mta1_mkdf_board_init(MachineState *machine)
     const MemMapEntry *memmap = mta1_mkdf_memmap;
     MemoryRegion *sys_mem = get_system_memory();
     Error *err = NULL;
+
+    // The MTA1 timer. Every tick we call mta1_mkdf_timer_tick().
+    s->timer = 0;
+    s->timer_prescaler = 0;
+    s->timer_running = false;
+    // Default interval is ~18 MHz, ~55 ns
+    s->timer_interval = NANOSECONDS_PER_SECOND / MTA1_MKDF_CLOCK_FREQ;
+    s->qtimer = timer_new_ns(QEMU_CLOCK_VIRTUAL, mta1_mkdf_timer_tick, s);
 
     // Unique Device Secret
     uint32_t uds[8] = {
