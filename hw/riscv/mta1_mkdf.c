@@ -31,6 +31,7 @@
 #include "hw/char/riscv_htif.h"
 #include "qapi/qmp/qerror.h"
 #include "qemu/log.h"
+#include "qemu/guest-random.h"
 
 static const MemMapEntry mta1_mkdf_memmap[] = {
     // TODO js said that currently ROM size is 2048 W32, and max is 3072 W32
@@ -298,11 +299,15 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
 
     badmsg = "addr/val/state not handled";
 
+    uint32_t entropy;
+
     switch (addr) {
-    case MTA1_MKDF_MMIO_TRNG_STATUS: // u32
-        break;
-    case MTA1_MKDF_MMIO_TRNG_ENTROPY: // u32
-        break;
+    case MTA1_MKDF_MMIO_TRNG_STATUS:
+        // Always ready
+        return 1 << MTA1_MKDF_MMIO_TRNG_STATUS_READY_BIT;
+    case MTA1_MKDF_MMIO_TRNG_ENTROPY:
+        qemu_guest_getrandom_nofail(&entropy, sizeof(entropy));
+        return entropy;
 
    case MTA1_MKDF_MMIO_TIMER_TIMER: // u32
         if (s->timer_running) {
