@@ -160,6 +160,14 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
     badmsg = "addr/val/state not handled";
 
     switch (addr) {
+    case MTA1_MKDF_MMIO_UART_TX_DATA:
+        qemu_chr_fe_write(&s->fifo_chr, &c, 1);
+        return;
+
+    case MTA1_MKDF_MMIO_TOUCH_STATUS:
+        // Always touched, we don't care about touch reset
+        return;
+
     case MTA1_MKDF_MMIO_MTA1_SWITCH_APP:
         if (s->app_mode) {
             badmsg = "write to SWITCH_APP in app-mode";
@@ -167,18 +175,12 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
         }
         s->app_mode = true;
         return;
-    case MTA1_MKDF_MMIO_UART_TX_DATA:
-        qemu_chr_fe_write(&s->fifo_chr, &c, 1);
-        return;
     case MTA1_MKDF_MMIO_MTA1_LED:
         s->led = val;
         qemu_log_mask(LOG_GUEST_ERROR, "%s: MTA1_LED rgb:%c%c%c\n", __func__,
                       val & (1 << MTA1_MKDF_MMIO_MTA1_LED_R_BIT) ? '1' : '0',
                       val & (1 << MTA1_MKDF_MMIO_MTA1_LED_G_BIT) ? '1' : '0',
                       val & (1 << MTA1_MKDF_MMIO_MTA1_LED_B_BIT) ? '1' : '0');
-        return;
-    case MTA1_MKDF_MMIO_TOUCH_STATUS:
-        // Always touched, we don't care about touch reset
         return;
     case MTA1_MKDF_MMIO_MTA1_APP_ADDR:
         if (s->app_mode) {
@@ -297,15 +299,28 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
     badmsg = "addr/val/state not handled";
 
     switch (addr) {
-    case MTA1_MKDF_MMIO_MTA1_SWITCH_APP:
-        badmsg = "read from SWITCH_APP";
+    case MTA1_MKDF_MMIO_TRNG_STATUS: // u32
         break;
-    case MTA1_MKDF_MMIO_MTA1_NAME0:
-        return 0x6d746131; // "mta1"
-    case MTA1_MKDF_MMIO_MTA1_NAME1:
-        return 0x6d6b6466; // "mkdf"
-    case MTA1_MKDF_MMIO_MTA1_VERSION:
-        return 1;
+    case MTA1_MKDF_MMIO_TRNG_ENTROPY: // u32
+        break;
+
+   case MTA1_MKDF_MMIO_TIMER_TIMER: // u32
+        if (s->timer_running) {
+            return s->timer;
+        } else {
+            return s->timer_initial;
+        }
+        break;
+    case MTA1_MKDF_MMIO_TIMER_PRESCALER:
+        return s->timer_prescaler;
+    case MTA1_MKDF_MMIO_TIMER_STATUS:
+        if (s->timer_running) {
+            return 0 << MTA1_MKDF_MMIO_TIMER_STATUS_READY_BIT;
+        } else {
+            return 1 << MTA1_MKDF_MMIO_TIMER_STATUS_READY_BIT;
+        }
+        break;
+
     case MTA1_MKDF_MMIO_UART_RX_STATUS:
         return s->fifo_rx_len;
     case MTA1_MKDF_MMIO_UART_RX_DATA:
@@ -323,31 +338,22 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
     case MTA1_MKDF_MMIO_UART_TX_DATA:
         badmsg = "read from TX_DATA";
         break;
-    case MTA1_MKDF_MMIO_MTA1_LED:
-        return s->led;
-    case MTA1_MKDF_MMIO_TIMER_TIMER: // u32
-        if (s->timer_running) {
-            return s->timer;
-        } else {
-            return s->timer_initial;
-        }
-        break;
-    case MTA1_MKDF_MMIO_TIMER_PRESCALER:
-        return s->timer_prescaler;
-    case MTA1_MKDF_MMIO_TIMER_STATUS:
-        if (s->timer_running) {
-            return 0 << MTA1_MKDF_MMIO_TIMER_STATUS_READY_BIT;
-        } else {
-            return 1 << MTA1_MKDF_MMIO_TIMER_STATUS_READY_BIT;
-        }
-        break;
-    case MTA1_MKDF_MMIO_TRNG_STATUS: // u32
-        break;
-    case MTA1_MKDF_MMIO_TRNG_ENTROPY: // u32
-        break;
+
     case MTA1_MKDF_MMIO_TOUCH_STATUS:
         // Always touched
         return 1 << MTA1_MKDF_MMIO_TOUCH_STATUS_EVENT_BIT;
+
+    case MTA1_MKDF_MMIO_MTA1_NAME0:
+        return 0x6d746131; // "mta1"
+    case MTA1_MKDF_MMIO_MTA1_NAME1:
+        return 0x6d6b6466; // "mkdf"
+    case MTA1_MKDF_MMIO_MTA1_VERSION:
+        return 1;
+    case MTA1_MKDF_MMIO_MTA1_SWITCH_APP:
+        badmsg = "read from SWITCH_APP";
+        break;
+    case MTA1_MKDF_MMIO_MTA1_LED:
+        return s->led;
     case MTA1_MKDF_MMIO_MTA1_APP_ADDR:
         return s->app_addr;
     case MTA1_MKDF_MMIO_MTA1_APP_SIZE:
