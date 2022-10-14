@@ -109,6 +109,17 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
         return;
     }
 
+    // Byte addressable
+    if (addr >= MTA1_MKDF_MMIO_FW_RAM_BASE
+        && (addr + size) <= (MTA1_MKDF_MMIO_FW_RAM_BASE + MTA1_MKDF_MMIO_FW_RAM_SIZE)) {
+        if (s->app_mode) {
+            badmsg = "write to FW_RAM in app-mode";
+            goto bad;
+        }
+        memcpy((void *)&s->fw_ram[addr - MTA1_MKDF_MMIO_FW_RAM_BASE], (void *)&val, size);
+        return;
+    }
+
     // Check size
     if (size != 4) {
         badmsg = "size not 32 bits";
@@ -198,6 +209,18 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
 
     // add base to make absolute
     addr += MTA1_MKDF_MMIO_BASE;
+
+    // Byte addressable
+    if (addr >= MTA1_MKDF_MMIO_FW_RAM_BASE
+        && (addr + size) <= (MTA1_MKDF_MMIO_FW_RAM_BASE + MTA1_MKDF_MMIO_FW_RAM_SIZE)) {
+        if (s->app_mode) {
+            badmsg = "read from FW_RAM in app-mode";
+            goto bad;
+        }
+        uint32_t val = 0;
+        memcpy((void *)&val, (void *)&s->fw_ram[addr - MTA1_MKDF_MMIO_FW_RAM_BASE], size);
+        return val;
+    }
 
     // Check size
     if (size != 4) {
