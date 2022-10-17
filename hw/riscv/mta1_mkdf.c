@@ -173,9 +173,9 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
     case MTA1_MKDF_MMIO_MTA1_LED:
         s->led = val;
         qemu_log_mask(LOG_GUEST_ERROR, "%s: MTA1_LED rgb:%c%c%c\n", __func__,
-                      val & MTA1_MKDF_MMIO_MTA1_LED_R_BIT ? '1' : '0',
-                      val & MTA1_MKDF_MMIO_MTA1_LED_G_BIT ? '1' : '0',
-                      val & MTA1_MKDF_MMIO_MTA1_LED_B_BIT ? '1' : '0');
+                      val & (1 << MTA1_MKDF_MMIO_MTA1_LED_R_BIT) ? '1' : '0',
+                      val & (1 << MTA1_MKDF_MMIO_MTA1_LED_G_BIT) ? '1' : '0',
+                      val & (1 << MTA1_MKDF_MMIO_MTA1_LED_B_BIT) ? '1' : '0');
         return;
     case MTA1_MKDF_MMIO_TOUCH_STATUS:
         // Always touched, we don't care about touch reset
