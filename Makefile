@@ -339,4 +339,4 @@ print-%:
 
 .PHONY: update-mem-include
 update-mem-include:
-	cp -af ../tillitis-key1/hw/application_fpga/fw/mta1_mkdf_mem.h include/hw/riscv/mta1_mkdf_mem.h
+	cp -af ../tillitis-key1/hw/application_fpga/fw/tk1_mem.h include/hw/riscv/tk1_mem.h

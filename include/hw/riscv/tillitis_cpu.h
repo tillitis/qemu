@@ -1,7 +1,7 @@
 /*
- * Mullvad CPU types
+ * Tillitis CPU types
  *
- * Copyright (c) 2022 Mullvad VPN AB
+ * Copyright (c) 2022 Tillitis AB
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -16,11 +16,12 @@
  * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef HW_MULLVAD_CPU_H
-#define HW_MULLVAD_CPU_H
+#ifndef HW_TILLITIS_CPU_H
+#define HW_TILLITIS_CPU_H
 
 #if defined(TARGET_RISCV32)
-#define MULLVAD_PICORV32_CPU TYPE_RISCV_CPU_MULLVAD_PICORV32
+#define TILLITIS_PICORV32_CPU TYPE_RISCV_CPU_TILLITIS_PICORV32
 #endif
 
-#endif /* HW_SIFIVE_CPU_H */
+#endif /* HW_TILLITIS_CPU_H */
+

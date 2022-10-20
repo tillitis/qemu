@@ -522,7 +522,7 @@ static void riscv_host_cpu_init(Object *obj)
     register_cpu_props(obj);
 }
 
-static void rv32_mullvad_picorv32_cpu_init(Object *obj)
+static void rv32_tillitis_picorv32_cpu_init(Object *obj)
 {
     CPURISCVState *env = &RISCV_CPU(obj)->env;
     set_misa(env, MXL_RV32, RVI | RVM | RVC);
@@ -1732,7 +1732,7 @@ static const TypeInfo riscv_cpu_type_infos[] = {
     DEFINE_CPU(TYPE_RISCV_CPU_SIFIVE_E31,       rv32_sifive_e_cpu_init),
     DEFINE_CPU(TYPE_RISCV_CPU_SIFIVE_E34,       rv32_imafcu_nommu_cpu_init),
     DEFINE_CPU(TYPE_RISCV_CPU_SIFIVE_U34,       rv32_sifive_u_cpu_init),
-    DEFINE_CPU(TYPE_RISCV_CPU_MULLVAD_PICORV32, rv32_mullvad_picorv32_cpu_init),
+    DEFINE_CPU(TYPE_RISCV_CPU_TILLITIS_PICORV32, rv32_tillitis_picorv32_cpu_init),
 #elif defined(TARGET_RISCV64)
     DEFINE_CPU(TYPE_RISCV_CPU_BASE64,           rv64_base_cpu_init),
     DEFINE_CPU(TYPE_RISCV_CPU_SIFIVE_E51,       rv64_sifive_e_cpu_init),
