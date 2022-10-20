@@ -18,7 +18,7 @@ config MICROCHIP_PFSOC
     select SIFIVE_PLIC
     select UNIMP
 
-config MTA1_MKDF
+config TK1
     bool
     select UNIMP
 
