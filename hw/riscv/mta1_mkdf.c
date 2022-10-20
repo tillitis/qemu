@@ -195,6 +195,7 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
         s->app_size = val;
         return;
     case MTA1_MKDF_MMIO_TIMER_TIMER:
+        s->timer_initial = val;
         s->timer = val;
         return;
     case MTA1_MKDF_MMIO_TIMER_CTRL:
@@ -325,7 +326,12 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
     case MTA1_MKDF_MMIO_MTA1_LED:
         return s->led;
     case MTA1_MKDF_MMIO_TIMER_TIMER: // u32
-        return s->timer;
+        if (s->timer_running) {
+            return s->timer;
+        } else {
+            return s->timer_initial;
+        }
+        break;
     case MTA1_MKDF_MMIO_TIMER_PRESCALER:
         return s->timer_prescaler;
     case MTA1_MKDF_MMIO_TIMER_STATUS:
@@ -393,6 +399,7 @@ static void mta1_mkdf_board_init(MachineState *machine)
     Error *err = NULL;
 
     // The MTA1 timer. Every tick we call mta1_mkdf_timer_tick().
+    s->timer_initial = 0;
     s->timer = 0;
     s->timer_prescaler = 0;
     s->timer_running = false;

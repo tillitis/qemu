@@ -57,6 +57,7 @@ typedef struct MTA1MKDFState {
     uint32_t cdi[8]; // 32 bytes
     uint32_t udi[2]; // 8 bytes
     uint8_t fw_ram[MTA1_MKDF_MMIO_FW_RAM_SIZE];
+    uint32_t timer_initial;
     uint32_t timer;
     uint32_t timer_prescaler;
     bool timer_running;
