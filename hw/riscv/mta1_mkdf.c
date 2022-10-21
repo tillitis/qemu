@@ -198,20 +198,25 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
         s->app_size = val;
         return;
     case MTA1_MKDF_MMIO_TIMER_TIMER:
+        if (s->timer_running) {
+            badmsg = "write to TIMER_TIMER while timer running";
+            break;
+        }
         s->timer_initial = val;
         s->timer = val;
         return;
     case MTA1_MKDF_MMIO_TIMER_CTRL:
         // Toggle timer
         if (s->timer_running) {
-            // Stop
+            // Stop. Reset to initial value.
             s->timer_running = false;
+            s->timer = s->timer_initial;
         } else {
             // Start and schedule next tick
             s->timer_running = true;
             timer_mod(s->qtimer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + s->timer_interval);
         }
-        break;
+        return;
     case MTA1_MKDF_MMIO_TIMER_PRESCALER:
         s->timer_prescaler = val;
         if (s->timer_prescaler == 0) {
@@ -220,7 +225,7 @@ static void mta1_mkdf_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsign
             s->timer_interval = s->timer_prescaler * NANOSECONDS_PER_SECOND / MTA1_MKDF_CLOCK_FREQ;
         }
 
-        break;
+        return;
     }
 
 bad:
@@ -310,12 +315,7 @@ static uint64_t mta1_mkdf_mmio_read(void *opaque, hwaddr addr, unsigned size)
         return entropy;
 
    case MTA1_MKDF_MMIO_TIMER_TIMER: // u32
-        if (s->timer_running) {
-            return s->timer;
-        } else {
-            return s->timer_initial;
-        }
-        break;
+       return s->timer;
     case MTA1_MKDF_MMIO_TIMER_PRESCALER:
         return s->timer_prescaler;
     case MTA1_MKDF_MMIO_TIMER_STATUS:
