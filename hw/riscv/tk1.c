@@ -312,8 +312,8 @@ static uint64_t tk1_mmio_read(void *opaque, hwaddr addr, unsigned size)
         qemu_guest_getrandom_nofail(&entropy, sizeof(entropy));
         return entropy;
 
-   case TK1_MMIO_TIMER_TIMER: // u32
-       return s->timer;
+    case TK1_MMIO_TIMER_TIMER: // u32
+        return s->timer;
     case TK1_MMIO_TIMER_PRESCALER:
         return s->timer_prescaler;
     case TK1_MMIO_TIMER_STATUS:
@@ -353,8 +353,10 @@ static uint64_t tk1_mmio_read(void *opaque, hwaddr addr, unsigned size)
     case TK1_MMIO_TK1_VERSION:
         return 1;
     case TK1_MMIO_TK1_SWITCH_APP:
-        badmsg = "read from SWITCH_APP";
-        break;
+        if (s->app_mode) {
+            return 0xffffffff;
+        }
+        return 0;
     case TK1_MMIO_TK1_LED:
         return s->led;
     case TK1_MMIO_TK1_APP_ADDR:
