@@ -34,9 +34,8 @@
 static const MemMapEntry tk1_memmap[] = {
     // TODO js said that currently ROM size is 2048 W32, and max is 3072 W32
     // (8192 and 12288 bytes resp right).
-    [TK1_ROM]  = { TK1_ROM_BASE,  0x20000 /*128K*/ },
-    // js said that we will have 128 kByte RAM (2**15 W32).
-    [TK1_RAM]  = { TK1_RAM_BASE,  0x20000 /*128K*/ },
+    [TK1_ROM]  = { TK1_ROM_BASE,  0x20000 /*128KB*/ },
+    [TK1_RAM]  = { TK1_RAM_BASE,  TK1_RAM_SIZE },
     [TK1_MMIO] = { TK1_MMIO_BASE, TK1_MMIO_SIZE },
 };
 
