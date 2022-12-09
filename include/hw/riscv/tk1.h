@@ -50,7 +50,6 @@ typedef struct TK1State {
     uint32_t app_size;
     uint32_t uds[8]; // 32 bytes
     bool block_uds[8];
-    uint32_t uda[4]; // 16 bytes
     uint32_t led;
     uint32_t blake2s;
     uint32_t cdi[8]; // 32 bytes
