@@ -300,6 +300,10 @@ static uint64_t tk1_mmio_read(void *opaque, hwaddr addr, unsigned size)
 
     /* UDI 8 bytes */
     if (addr >= TK1_MMIO_TK1_UDI_FIRST && addr <= TK1_MMIO_TK1_UDI_LAST) {
+        if (s->app_mode) {
+            badmsg = "read from UDI in app-mode";
+            goto bad;
+        }
         return s->udi[(addr - TK1_MMIO_TK1_UDI_FIRST) / 4];
     }
 
