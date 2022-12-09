@@ -195,6 +195,9 @@ static void tk1_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned siz
         }
         s->app_size = val;
         return;
+    case TK1_MMIO_TK1_BLAKE2S:
+        s->blake2s = val;
+        return;
     case TK1_MMIO_TIMER_TIMER:
         if (s->timer_running) {
             badmsg = "write to TIMER_TIMER while timer running";
@@ -363,6 +366,8 @@ static uint64_t tk1_mmio_read(void *opaque, hwaddr addr, unsigned size)
         return s->app_addr;
     case TK1_MMIO_TK1_APP_SIZE:
         return s->app_size;
+    case TK1_MMIO_TK1_BLAKE2S:
+        return s->blake2s;
     }
 
 bad:
