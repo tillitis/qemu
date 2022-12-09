@@ -134,12 +134,6 @@ static void tk1_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned siz
         badmsg = "write to UDS";
         goto bad;
     }
-    // TODO: temp UDA only has 1 address so it is only 1 word (4 bytes). Real
-    // has 4 addrs, so 4 words (16 bytes).
-    if (addr >= TK1_MMIO_QEMU_UDA && addr <= TK1_MMIO_QEMU_UDA) {
-        badmsg = "write to UDA";
-        goto bad;
-    }
     if (addr >= TK1_MMIO_TK1_UDI_FIRST && addr <= TK1_MMIO_TK1_UDI_LAST) {
         badmsg = "write to UDI";
         goto bad;
@@ -280,17 +274,6 @@ static uint64_t tk1_mmio_read(void *opaque, hwaddr addr, unsigned size)
         }
         s->block_uds[i] = true;
         return s->uds[i];
-    }
-
-    /* UDA 16 bytes */
-    // TODO: temp UDA only has 1 address so it is only 1 word (4 bytes). Real
-    // has 4 addrs, so 4 words (16 bytes).
-    if (addr >= TK1_MMIO_QEMU_UDA && addr <= TK1_MMIO_QEMU_UDA) {
-        if (s->app_mode) {
-            badmsg = "read from UDA in app-mode";
-            goto bad;
-        }
-        return s->uda[(addr - TK1_MMIO_QEMU_UDA) / 4];
     }
 
     /* CDI 32 bytes */
@@ -442,11 +425,6 @@ static void tk1_board_init(MachineState *machine)
     memcpy(s->uds, uds, 32);
     for (int i = 0; i < 8; i ++) {
         s->block_uds[i] = false;
-    }
-
-    // Unique Device Authentication key
-    for (int i = 0; i < 4; i ++) {
-        s->uda[i] = i+1;
     }
 
     // Unique Device ID
