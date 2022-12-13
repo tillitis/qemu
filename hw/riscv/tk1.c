@@ -175,10 +175,11 @@ static void tk1_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned siz
         return;
     case TK1_MMIO_TK1_LED:
         s->led = val;
-        qemu_log_mask(LOG_GUEST_ERROR, "%s: TK1_LED rgb:%c%c%c\n", __func__,
-                      val & (1 << TK1_MMIO_TK1_LED_R_BIT) ? '1' : '0',
-                      val & (1 << TK1_MMIO_TK1_LED_G_BIT) ? '1' : '0',
-                      val & (1 << TK1_MMIO_TK1_LED_B_BIT) ? '1' : '0');
+        // Not logging LED writes by default, it's too verbose
+        // qemu_log_mask(LOG_GUEST_ERROR, "%s: TK1_LED rgb:%c%c%c\n", __func__,
+        //               val & (1 << TK1_MMIO_TK1_LED_R_BIT) ? '1' : '0',
+        //               val & (1 << TK1_MMIO_TK1_LED_G_BIT) ? '1' : '0',
+        //               val & (1 << TK1_MMIO_TK1_LED_B_BIT) ? '1' : '0');
         return;
     case TK1_MMIO_TK1_APP_ADDR:
         if (s->app_mode) {
