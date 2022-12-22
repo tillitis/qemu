@@ -421,16 +421,17 @@ static void tk1_board_init(MachineState *machine)
         0xe6e6e6e6,
         0xf7f7f7f7
     };
-
     memcpy(s->uds, uds, 32);
+
     for (int i = 0; i < 8; i ++) {
         s->block_uds[i] = false;
     }
 
-    // Unique Device ID
-    for (int i = 0; i < 2; i ++) {
-        s->udi[i] = i+1;
-    }
+    uint32_t udi[2] = {
+        0x00010203,
+        0x04050607
+    };
+    memcpy(s->udi, udi, 8);
 
     if (!tk1_setup_chardev(s, &err)) {
         error_report_err(err);
