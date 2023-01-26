@@ -420,6 +420,48 @@ static void tk1_watchdog(void *opaque)
 
     printf("watchdog hit!\n");
 
+    // TODO Reset everything! Might be managed automatically if we manage to reset the machine?
+    s->timer_initial = 0;
+    s->timer = 0;
+    s->timer_prescaler = 0;
+    s->timer_running = false;
+    // Default interval is ~18 MHz, ~55 ns
+    s->timer_interval = NANOSECONDS_PER_SECOND / TK1_CLOCK_FREQ;
+
+    s->watchdog_initial = 0x7ffffff;
+    s->watchdog_running = false;
+
+    // Back to firmware mode
+    s->app_mode = false;
+
+    s->app_addr = 0;
+    s->app_size = 0;
+
+    for (int i = 0; i < 8; i ++) {
+        s->block_uds[i] = false;
+    }
+
+    s->led = 0;
+    s->blake2s = 0;
+
+    for (int i = 0; i < 8; i ++) {
+        s->cdi[i] = 0;
+    }
+
+    // TODO Reset CPU. How?
+    printf("Trying reset\n");
+    // This does nothing
+    //qemu_system_reset(SHUTDOWN_CAUSE_GUEST_RESET);
+
+    // This unfortunately prints "No reset function".
+    MachineClass *mc;
+    mc = current_machine ? MACHINE_GET_CLASS(current_machine) : NULL;
+    if (mc && mc->reset) {
+        printf("We have the reset function.\n");
+        mc->reset(current_machine);
+    } else {
+        printf("No reset function.\n");
+    }
 }
 
 static void tk1_board_init(MachineState *machine)
