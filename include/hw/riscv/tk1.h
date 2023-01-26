@@ -41,6 +41,8 @@ typedef struct TK1State {
 
     QEMUTimer *qtimer;
 
+    QEMUTimer *qwatchdog;
+
     CharBackend fifo_chr;
     char *fifo_chr_name;
     uint8_t fifo_rx[TK1_RX_FIFO_SIZE];
@@ -60,6 +62,8 @@ typedef struct TK1State {
     uint32_t timer_prescaler;
     bool timer_running;
     uint32_t timer_interval;
+    uint32_t watchdog_initial;
+    bool watchdog_running;
 } TK1State;
 
 #define TYPE_TK1_MACHINE MACHINE_TYPE_NAME("tk1")

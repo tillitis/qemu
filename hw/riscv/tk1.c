@@ -30,6 +30,7 @@
 #include "qapi/qmp/qerror.h"
 #include "qemu/log.h"
 #include "qemu/guest-random.h"
+#include "sysemu/runstate.h"
 
 static const MemMapEntry tk1_memmap[] = {
     // TODO js said that currently ROM size is 2048 W32, and max is 3072 W32
@@ -221,6 +222,22 @@ static void tk1_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned siz
         }
 
         return;
+
+    case TK1_MMIO_WATCHDOG_CTRL:
+        if (val & (1 << TK1_MMIO_WATCHDOG_CTRL_START_BIT)) {
+            // Start and schedule next tick
+            s->watchdog_running = true;
+            timer_mod(s->qwatchdog, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + s->watchdog_initial * NANOSECONDS_PER_SECOND / TK1_CLOCK_FREQ);
+        } else if (val & (1 << TK1_MMIO_WATCHDOG_CTRL_STOP_BIT)) {
+            s->watchdog_running = false;
+        }
+
+        return;
+
+    case TK1_MMIO_WATCHDOG_TIMER_INIT:
+        s->watchdog_initial = val;
+
+        return;
     }
 
 bad:
@@ -393,6 +410,18 @@ static void tk1_timer_tick(void *opaque)
     }
 }
 
+static void tk1_watchdog(void *opaque)
+{
+    TK1State *s = (TK1State *) opaque;
+
+    if (!s->watchdog_running) {
+        return;
+    }
+
+    printf("watchdog hit!\n");
+
+}
+
 static void tk1_board_init(MachineState *machine)
 {
     MachineClass *mc = MACHINE_GET_CLASS(machine);
@@ -409,6 +438,11 @@ static void tk1_board_init(MachineState *machine)
     // Default interval is ~18 MHz, ~55 ns
     s->timer_interval = NANOSECONDS_PER_SECOND / TK1_CLOCK_FREQ;
     s->qtimer = timer_new_ns(QEMU_CLOCK_VIRTUAL, tk1_timer_tick, s);
+
+    // The watchdog - when it's running and reaches 0 we call tk1_watchdog()
+    s->watchdog_initial = 0x7ffffff;
+    s->watchdog_running = false;
+    s->qwatchdog = timer_new_ns(QEMU_CLOCK_VIRTUAL, tk1_watchdog, s);
 
     // Unique Device Secret
     uint32_t uds[8] = {
