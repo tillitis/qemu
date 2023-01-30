@@ -194,25 +194,34 @@ static void tk1_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned siz
         return;
     case TK1_MMIO_TIMER_TIMER:
         if (s->timer_running) {
-            badmsg = "write to TIMER_TIMER while timer running";
+            badmsg = "write to TIMER_TIMER while timer running does nothing";
             break;
         }
         s->timer_initial = val;
         s->timer = val;
         return;
     case TK1_MMIO_TIMER_CTRL:
-        // Toggle timer
         if (s->timer_running) {
-            // Stop. Reset to initial value.
-            s->timer_running = false;
-            s->timer = s->timer_initial;
+            if (val & (1 << TK1_MMIO_TIMER_CTRL_STOP_BIT)) {
+                // Stop. Reset to initial value.
+                s->timer_running = false;
+                s->timer = s->timer_initial;
+            }
+            // Start timer when already running does nothing
         } else {
-            // Start and schedule next tick
-            s->timer_running = true;
-            timer_mod(s->qtimer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + s->timer_interval);
+            if (val & (1 << TK1_MMIO_TIMER_CTRL_START_BIT)) {
+                // Start and schedule next tick
+                s->timer_running = true;
+                timer_mod(s->qtimer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + s->timer_interval);
+            }
+            // Stop timer when not running does nothing
         }
         return;
     case TK1_MMIO_TIMER_PRESCALER:
+        if (s->timer_running) {
+            badmsg = "write to TIMER_PRESCALER while timer running does nothing";
+            break;
+        }
         s->timer_prescaler = val;
         if (s->timer_prescaler == 0) {
             s->timer_interval = NANOSECONDS_PER_SECOND / TK1_CLOCK_FREQ;
@@ -308,9 +317,9 @@ static uint64_t tk1_mmio_read(void *opaque, hwaddr addr, unsigned size)
         return s->timer_prescaler;
     case TK1_MMIO_TIMER_STATUS:
         if (s->timer_running) {
-            return 0 << TK1_MMIO_TIMER_STATUS_READY_BIT;
+            return 1 << TK1_MMIO_TIMER_STATUS_RUNNING_BIT;
         } else {
-            return 1 << TK1_MMIO_TIMER_STATUS_READY_BIT;
+            return 0 << TK1_MMIO_TIMER_STATUS_RUNNING_BIT;
         }
         break;
 
