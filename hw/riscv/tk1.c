@@ -114,7 +114,7 @@ static void tk1_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned siz
             badmsg = "write to FW_RAM in app-mode";
             goto bad;
         }
-        memcpy((void *)&s->fw_ram[addr - TK1_MMIO_FW_RAM_BASE], (void *)&val, size);
+        memcpy(&s->fw_ram[addr - TK1_MMIO_FW_RAM_BASE], &val, size);
         return;
     }
 
@@ -139,13 +139,13 @@ static void tk1_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned siz
         goto bad;
     }
 
-    /* CDI u32[8] */
-    if (addr >= TK1_MMIO_TK1_CDI_FIRST && addr <= TK1_MMIO_TK1_CDI_LAST) {
+    /* CDI u8[32] */
+    if (addr >= TK1_MMIO_TK1_CDI_FIRST && addr + size <= TK1_MMIO_TK1_CDI_LAST + 4) {
         if (s->app_mode) {
             badmsg = "write to CDI in app-mode";
             goto bad;
         }
-        s->cdi[(addr - TK1_MMIO_TK1_CDI_FIRST) / 4] = val;
+        memcpy(&s->cdi[(addr - TK1_MMIO_TK1_CDI_FIRST)], &val, size);
         return;
     }
 
@@ -242,6 +242,7 @@ static uint64_t tk1_mmio_read(void *opaque, hwaddr addr, unsigned size)
     TK1State *s = opaque;
     uint8_t r;
     const char *badmsg = "";
+    uint32_t val = 0;
 
     // add base to make absolute
     addr += TK1_MMIO_BASE;
@@ -253,10 +254,42 @@ static uint64_t tk1_mmio_read(void *opaque, hwaddr addr, unsigned size)
             badmsg = "read from FW_RAM in app-mode";
             goto bad;
         }
-        uint32_t val = 0;
         memcpy((void *)&val, (void *)&s->fw_ram[addr - TK1_MMIO_FW_RAM_BASE], size);
         return val;
     }
+
+    // UDS 32 bytes
+    if (addr >= TK1_MMIO_UDS_FIRST && addr + size <= TK1_MMIO_UDS_LAST + 4) {
+        if (s->app_mode) {
+            badmsg = "read from UDS in app-mode";
+            goto bad;
+        }
+
+        uint32_t rel_addr = addr - TK1_MMIO_UDS_FIRST;
+
+        for (uint32_t i = rel_addr; i < rel_addr + size; i ++) {
+            if (s->block_uds[i]) {
+                badmsg = "read from UDS twice";
+                goto bad;
+            }
+        }
+
+        // Should only be read once
+        memset(&s->block_uds[rel_addr], true, size);
+
+        memcpy(&val, (uint8_t *)&s->uds[rel_addr], size);
+        return val;
+    }
+
+    // CDI 32 bytes
+    if (addr >= TK1_MMIO_TK1_CDI_FIRST && addr + size <= TK1_MMIO_TK1_CDI_LAST + 4) {
+        uint32_t rel_addr = addr - TK1_MMIO_TK1_CDI_FIRST;
+        memcpy(&val, &s->cdi[rel_addr], size);
+
+        return val;
+    }
+
+    // Word addressable stuff
 
     // Check size
     if (size != 4) {
@@ -267,27 +300,6 @@ static uint64_t tk1_mmio_read(void *opaque, hwaddr addr, unsigned size)
     if (addr % 4 != 0) {
         badmsg = "addr not 32-bit aligned";
         goto bad;
-    }
-
-    /* UDS 32 bytes */
-    if (addr >= TK1_MMIO_UDS_FIRST && addr <= TK1_MMIO_UDS_LAST) {
-        if (s->app_mode) {
-            badmsg = "read from UDS in app-mode";
-            goto bad;
-        }
-        int i = (addr - TK1_MMIO_UDS_FIRST) / 4;
-        // Should only be read once
-        if (s->block_uds[i]) {
-            badmsg = "read from UDS twice";
-            goto bad;
-        }
-        s->block_uds[i] = true;
-        return s->uds[i];
-    }
-
-    /* CDI 32 bytes */
-    if (addr >= TK1_MMIO_TK1_CDI_FIRST && addr <= TK1_MMIO_TK1_CDI_LAST) {
-        return s->cdi[(addr - TK1_MMIO_TK1_CDI_FIRST) / 4];
     }
 
     /* UDI 8 bytes */
@@ -432,7 +444,7 @@ static void tk1_board_init(MachineState *machine)
     };
     memcpy(s->uds, uds, 32);
 
-    for (int i = 0; i < 8; i ++) {
+    for (int i = 0; i < 32; i ++) {
         s->block_uds[i] = false;
     }
 
