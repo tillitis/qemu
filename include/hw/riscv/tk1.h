@@ -48,11 +48,11 @@ typedef struct TK1State {
     bool app_mode;
     uint32_t app_addr;
     uint32_t app_size;
-    uint8_t uds[32];
-    bool block_uds[32];
+    uint32_t uds[8]; // 32 bytes
+    bool block_uds[8];
     uint32_t led;
     uint32_t blake2s;
-    uint8_t cdi[32];
+    uint32_t cdi[8]; // 32 bytes
     uint32_t udi[2]; // 8 bytes
     uint8_t fw_ram[TK1_MMIO_FW_RAM_SIZE];
     uint32_t timer_initial;
