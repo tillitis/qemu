@@ -114,7 +114,7 @@ static void tk1_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned siz
             badmsg = "write to FW_RAM in app-mode";
             goto bad;
         }
-        memcpy((void *)&s->fw_ram[addr - TK1_MMIO_FW_RAM_BASE], (void *)&val, size);
+        memcpy(&s->fw_ram[addr - TK1_MMIO_FW_RAM_BASE], &val, size);
         return;
     }
 
@@ -139,13 +139,13 @@ static void tk1_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned siz
         goto bad;
     }
 
-    /* CDI u32[8] */
+    // CDI u32[8], only word-writable
     if (addr >= TK1_MMIO_TK1_CDI_FIRST && addr <= TK1_MMIO_TK1_CDI_LAST) {
         if (s->app_mode) {
             badmsg = "write to CDI in app-mode";
             goto bad;
         }
-        s->cdi[(addr - TK1_MMIO_TK1_CDI_FIRST) / 4] = val;
+        memcpy(&s->cdi[(addr - TK1_MMIO_TK1_CDI_FIRST)], &val, size);
         return;
     }
 
@@ -254,9 +254,19 @@ static uint64_t tk1_mmio_read(void *opaque, hwaddr addr, unsigned size)
             goto bad;
         }
         uint32_t val = 0;
-        memcpy((void *)&val, (void *)&s->fw_ram[addr - TK1_MMIO_FW_RAM_BASE], size);
+        memcpy(&val, &s->fw_ram[addr - TK1_MMIO_FW_RAM_BASE], size);
         return val;
     }
+
+    // CDI 32 bytes, byte-readable
+    if (addr >= TK1_MMIO_TK1_CDI_FIRST
+        && (addr + size) <= (TK1_MMIO_TK1_CDI_LAST + 4)) {
+        uint32_t val = 0;
+        memcpy(&val, &s->cdi[addr - TK1_MMIO_TK1_CDI_FIRST], size);
+        return val;
+    }
+
+    // Word addressable stuff
 
     // Check size
     if (size != 4) {
@@ -269,7 +279,10 @@ static uint64_t tk1_mmio_read(void *opaque, hwaddr addr, unsigned size)
         goto bad;
     }
 
-    /* UDS 32 bytes */
+    // UDS 32 bytes. UDS is in theory byte-readable. But since the hardware
+    // read-once implementation is word-based (4 bytes), it is in practice not
+    // possible to read all 4 bytes of a word -- the 3 last bytes read would
+    // just be zeros. Therefore we only implement word-reading here.
     if (addr >= TK1_MMIO_UDS_FIRST && addr <= TK1_MMIO_UDS_LAST) {
         if (s->app_mode) {
             badmsg = "read from UDS in app-mode";
@@ -283,11 +296,6 @@ static uint64_t tk1_mmio_read(void *opaque, hwaddr addr, unsigned size)
         }
         s->block_uds[i] = true;
         return s->uds[i];
-    }
-
-    /* CDI 32 bytes */
-    if (addr >= TK1_MMIO_TK1_CDI_FIRST && addr <= TK1_MMIO_TK1_CDI_LAST) {
-        return s->cdi[(addr - TK1_MMIO_TK1_CDI_FIRST) / 4];
     }
 
     /* UDI 8 bytes */
