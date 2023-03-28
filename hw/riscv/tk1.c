@@ -433,14 +433,14 @@ static void tk1_board_init(MachineState *machine)
 
     // Unique Device Secret
     uint32_t uds[8] = {
-        0x80808080,
-        0x91919191,
-        0xa2a2a2a2,
-        0xb3b3b3b3,
-        0xc4c4c4c4,
-        0xd5d5d5d5,
-        0xe6e6e6e6,
-        0xf7f7f7f7
+        0x80818283,
+        0x94959697,
+        0xa0a1a2a3,
+        0xb4b5b6b7,
+        0xc0c1c2c3,
+        0xd4d5d6d7,
+        0xe0e1e2e3,
+        0xf4f5f6f7,
     };
     memcpy(s->uds, uds, 32);
 
