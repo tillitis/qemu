@@ -13,7 +13,11 @@
 #include "qemu/osdep.h"
 
 #include "vss-common.h"
-#include <inc/win2003/vscoordint.h>
+#ifdef HAVE_VSS_SDK
+#include <vscoordint.h>
+#else
+#include <vsadmin.h>
+#endif
 #include "install.h"
 #include <wbemidl.h>
 #include <comdef.h>
@@ -42,7 +46,8 @@ void errmsg(DWORD err, const char *text)
      * If text doesn't contains '(', negative precision is given, which is
      * treated as though it were missing.
      */
-    char *msg = NULL, *nul = strchr(text, '(');
+    char *msg = NULL;
+    const char *nul = strchr(text, '(');
     int len = nul ? nul - text : -1;
 
     FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER |
@@ -352,6 +357,15 @@ out:
     return hr;
 }
 
+STDAPI_(void) CALLBACK DLLCOMRegister(HWND, HINSTANCE, LPSTR, int)
+{
+    COMRegister();
+}
+
+STDAPI_(void) CALLBACK DLLCOMUnregister(HWND, HINSTANCE, LPSTR, int)
+{
+    COMUnregister();
+}
 
 static BOOL CreateRegistryKey(LPCTSTR key, LPCTSTR value, LPCTSTR data)
 {
@@ -513,7 +527,7 @@ namespace _com_util
 /* Stop QGA VSS provider service using Winsvc API  */
 STDAPI StopService(void)
 {
-    HRESULT hr;
+    HRESULT hr = S_OK;
     SC_HANDLE manager = OpenSCManager(NULL, NULL, SC_MANAGER_ALL_ACCESS);
     SC_HANDLE service = NULL;
 

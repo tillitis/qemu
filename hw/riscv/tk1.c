@@ -20,6 +20,7 @@
 #include "qemu/cutils.h"
 #include "hw/riscv/tk1.h"
 #include "qapi/error.h"
+#include "qemu/error-report.h"
 #include "hw/boards.h"
 #include "hw/misc/unimp.h"
 #include "hw/riscv/boot.h"
@@ -497,7 +498,7 @@ static void tk1_board_init(MachineState *machine)
     }
 
     riscv_load_firmware(machine->firmware, memmap[TK1_ROM].base, htif_symbol_callback);
-    htif_mm_init(sys_mem, &s->rom, &s->cpus.harts[0].env, serial_hd(0));
+    htif_mm_init(sys_mem, serial_hd(0), 0, 0);
 }
 
 static void tk1_machine_instance_init(Object *obj)
