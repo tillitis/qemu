@@ -521,7 +521,9 @@ static void riscv_host_cpu_init(Object *obj)
 #endif
     register_cpu_props(obj);
 }
+#endif
 
+#if defined(TARGET_RISCV32)
 static void rv32_tillitis_picorv32_cpu_init(Object *obj)
 {
     CPURISCVState *env = &RISCV_CPU(obj)->env;
@@ -531,7 +533,7 @@ static void rv32_tillitis_picorv32_cpu_init(Object *obj)
     qdev_prop_set_bit(DEVICE(obj), "mmu", false);
     qdev_prop_set_bit(DEVICE(obj), "pmp", false);
 }
-#endif
+#endif /* TARGET_RISCV32 */
 
 static ObjectClass *riscv_cpu_class_by_name(const char *cpu_model)
 {
