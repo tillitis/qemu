@@ -527,11 +527,13 @@ static void riscv_host_cpu_init(Object *obj)
 static void rv32_tillitis_picorv32_cpu_init(Object *obj)
 {
     CPURISCVState *env = &RISCV_CPU(obj)->env;
+    RISCVCPU *cpu = RISCV_CPU(obj);
     /* TODO: We should set RVZMMUL instead of RVM. Looks like QEMU 7.2 will
      * have support for that. */
     set_misa(env, MXL_RV32, RVI | RVM | RVC);
-    qdev_prop_set_bit(DEVICE(obj), "mmu", false);
-    qdev_prop_set_bit(DEVICE(obj), "pmp", false);
+    register_cpu_props(obj);
+    cpu->cfg.mmu = false;
+    cpu->cfg.pmp = false;
 }
 #endif /* TARGET_RISCV32 */
 
