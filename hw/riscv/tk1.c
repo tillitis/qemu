@@ -498,8 +498,7 @@ static void tk1_board_init(MachineState *machine)
     }
 
     riscv_load_firmware(machine->firmware, memmap[TK1_ROM].base, htif_symbol_callback);
-    // TODO old htif_mm_init call, not longer workable
-    // htif_mm_init(sys_mem, &s->rom, &s->cpus.harts[0].env, serial_hd(0));
+    htif_mm_init(sys_mem, serial_hd(0), 0, 0);
 }
 
 static void tk1_machine_instance_init(Object *obj)
