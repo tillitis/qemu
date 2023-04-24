@@ -45,6 +45,7 @@ typedef struct TK1State {
     char *fifo_chr_name;
     uint8_t fifo_rx[TK1_RX_FIFO_SIZE];
     uint8_t fifo_rx_len;
+    bool htif_enabled;
     bool app_mode;
     uint32_t app_addr;
     uint32_t app_size;
