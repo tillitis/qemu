@@ -149,16 +149,16 @@ static MemTxResult systick_write(void *opaque, hwaddr addr,
         s->control &= 0xfffffff8;
         s->control |= value & 7;
 
+        if ((oldval ^ value) & SYSTICK_CLKSOURCE) {
+            systick_set_period_from_clock(s);
+        }
+
         if ((oldval ^ value) & SYSTICK_ENABLE) {
             if (value & SYSTICK_ENABLE) {
                 ptimer_run(s->ptimer, 0);
             } else {
                 ptimer_stop(s->ptimer);
             }
-        }
-
-        if ((oldval ^ value) & SYSTICK_CLKSOURCE) {
-            systick_set_period_from_clock(s);
         }
         ptimer_transaction_commit(s->ptimer);
         break;
@@ -275,7 +275,7 @@ static const VMStateDescription vmstate_systick = {
     .name = "armv7m_systick",
     .version_id = 3,
     .minimum_version_id = 3,
-    .fields = (VMStateField[]) {
+    .fields = (const VMStateField[]) {
         VMSTATE_CLOCK(refclk, SysTickState),
         VMSTATE_CLOCK(cpuclk, SysTickState),
         VMSTATE_UINT32(control, SysTickState),

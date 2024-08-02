@@ -31,9 +31,10 @@ static void ccw_device_refill_ids(CcwDevice *dev)
     dev->subch_id.valid = true;
 }
 
-static void ccw_device_realize(CcwDevice *dev, Error **errp)
+static bool ccw_device_realize(CcwDevice *dev, Error **errp)
 {
     ccw_device_refill_ids(dev);
+    return true;
 }
 
 static Property ccw_device_properties[] = {
@@ -66,7 +67,7 @@ const VMStateDescription vmstate_ccw_dev = {
     .name = "s390_ccw_dev",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (VMStateField[]) {
+    .fields = (const VMStateField[]) {
         VMSTATE_STRUCT_POINTER(sch, CcwDevice, vmstate_subch_dev, SubchDev),
         VMSTATE_END_OF_LIST()
     }

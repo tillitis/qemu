@@ -1,9 +1,9 @@
 /*
  * Fused Multiply Add (Single)
  *
- * Copyright (c) 2019 Linaro
+ * Copyright (c) 2019, 2024 Linaro
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
 #include <stdio.h>
@@ -54,8 +54,8 @@ static void print_result(float r, int j, int k)
 {
     char *r_fmt, *flag_fmt;
 
-    r_fmt = fmt_f32(r);
     flag_fmt = fmt_flags();
+    r_fmt = fmt_f32(r);
 
     printf("res: %s flags=%s (%d/%d)\n", r_fmt, flag_fmt, j, k);
 

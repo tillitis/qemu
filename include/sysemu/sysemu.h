@@ -13,10 +13,11 @@ extern const char *qemu_name;
 extern QemuUUID qemu_uuid;
 extern bool qemu_uuid_set;
 
+const char *qemu_get_vm_name(void);
+
 void qemu_add_exit_notifier(Notifier *notify);
 void qemu_remove_exit_notifier(Notifier *notify);
 
-void qemu_run_machine_init_done_notifiers(void);
 void qemu_add_machine_init_done_notifier(Notifier *notify);
 void qemu_remove_machine_init_done_notifier(Notifier *notify);
 
@@ -33,19 +34,15 @@ typedef enum {
 } VGAInterfaceType;
 
 extern int vga_interface_type;
+extern bool vga_interface_created;
 
 extern int graphic_width;
 extern int graphic_height;
 extern int graphic_depth;
 extern int display_opengl;
 extern const char *keyboard_layout;
-extern int win2k_install_hack;
-extern int alt_grab;
-extern int ctrl_grab;
 extern int graphic_rotate;
 extern int old_param;
-extern int boot_menu;
-extern bool boot_strict;
 extern uint8_t *boot_splash_filedata;
 extern bool enable_mlock;
 extern bool enable_cpu_pm;
@@ -63,9 +60,6 @@ extern int nb_option_roms;
 extern const char *prom_envs[MAX_PROM_ENVS];
 extern unsigned int nb_prom_envs;
 
-/* pcie aer error injection */
-void hmp_pcie_aer_inject_error(Monitor *mon, const QDict *qdict);
-
 /* serial ports */
 
 /* Return the Chardev for serial port i, or NULL if none */
@@ -76,8 +70,6 @@ Chardev *serial_hd(int i);
 #define MAX_PARALLEL_PORTS 3
 
 extern Chardev *parallel_hds[MAX_PARALLEL_PORTS];
-
-void hmp_info_usb(Monitor *mon, const QDict *qdict);
 
 void add_boot_device_path(int32_t bootindex, DeviceState *dev,
                           const char *suffix);
@@ -104,9 +96,9 @@ void qemu_boot_set(const char *boot_order, Error **errp);
 
 bool defaults_enabled(void);
 
-void qemu_init(int argc, char **argv, char **envp);
-void qemu_main_loop(void);
-void qemu_cleanup(void);
+void qemu_init(int argc, char **argv);
+int qemu_main_loop(void);
+void qemu_cleanup(int);
 
 extern QemuOptsList qemu_legacy_drive_opts;
 extern QemuOptsList qemu_common_drive_opts;

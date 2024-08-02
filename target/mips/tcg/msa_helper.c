@@ -22,6 +22,7 @@
 #include "internal.h"
 #include "tcg/tcg.h"
 #include "exec/exec-all.h"
+#include "exec/cpu_ldst.h"
 #include "exec/helper-proto.h"
 #include "exec/memop.h"
 #include "fpu/softfloat.h"
@@ -802,9 +803,9 @@ void helper_msa_bset_d(CPUMIPSState *env, uint32_t wd, uint32_t ws, uint32_t wt)
  * | HADD_S.H      | Vector Signed Horizontal Add (halfword)                  |
  * | HADD_S.W      | Vector Signed Horizontal Add (word)                      |
  * | HADD_S.D      | Vector Signed Horizontal Add (doubleword)                |
- * | HADD_U.H      | Vector Unigned Horizontal Add (halfword)                 |
- * | HADD_U.W      | Vector Unigned Horizontal Add (word)                     |
- * | HADD_U.D      | Vector Unigned Horizontal Add (doubleword)               |
+ * | HADD_U.H      | Vector Unsigned Horizontal Add (halfword)                |
+ * | HADD_U.W      | Vector Unsigned Horizontal Add (word)                    |
+ * | HADD_U.D      | Vector Unsigned Horizontal Add (doubleword)              |
  * +---------------+----------------------------------------------------------+
  */
 
@@ -3451,9 +3452,9 @@ void helper_msa_mulv_d(CPUMIPSState *env,
  * | HSUB_S.H      | Vector Signed Horizontal Subtract (halfword)             |
  * | HSUB_S.W      | Vector Signed Horizontal Subtract (word)                 |
  * | HSUB_S.D      | Vector Signed Horizontal Subtract (doubleword)           |
- * | HSUB_U.H      | Vector Unigned Horizontal Subtract (halfword)            |
- * | HSUB_U.W      | Vector Unigned Horizontal Subtract (word)                |
- * | HSUB_U.D      | Vector Unigned Horizontal Subtract (doubleword)          |
+ * | HSUB_U.H      | Vector Unsigned Horizontal Subtract (halfword)           |
+ * | HSUB_U.W      | Vector Unsigned Horizontal Subtract (word)               |
+ * | HSUB_U.D      | Vector Unsigned Horizontal Subtract (doubleword)         |
  * | SUBS_S.B      | Vector Signed Saturated Subtract (of Signed) (byte)      |
  * | SUBS_S.H      | Vector Signed Saturated Subtract (of Signed) (halfword)  |
  * | SUBS_S.W      | Vector Signed Saturated Subtract (of Signed) (word)      |
@@ -4146,7 +4147,7 @@ void helper_msa_ilvev_b(CPUMIPSState *env,
     wr_t *pws = &(env->active_fpu.fpr[ws].wr);
     wr_t *pwt = &(env->active_fpu.fpr[wt].wr);
 
-#if defined(HOST_WORDS_BIGENDIAN)
+#if HOST_BIG_ENDIAN
     pwd->b[8]  = pws->b[9];
     pwd->b[9]  = pwt->b[9];
     pwd->b[10] = pws->b[11];
@@ -4190,7 +4191,7 @@ void helper_msa_ilvev_h(CPUMIPSState *env,
     wr_t *pws = &(env->active_fpu.fpr[ws].wr);
     wr_t *pwt = &(env->active_fpu.fpr[wt].wr);
 
-#if defined(HOST_WORDS_BIGENDIAN)
+#if HOST_BIG_ENDIAN
     pwd->h[4] = pws->h[5];
     pwd->h[5] = pwt->h[5];
     pwd->h[6] = pws->h[7];
@@ -4218,7 +4219,7 @@ void helper_msa_ilvev_w(CPUMIPSState *env,
     wr_t *pws = &(env->active_fpu.fpr[ws].wr);
     wr_t *pwt = &(env->active_fpu.fpr[wt].wr);
 
-#if defined(HOST_WORDS_BIGENDIAN)
+#if HOST_BIG_ENDIAN
     pwd->w[2] = pws->w[3];
     pwd->w[3] = pwt->w[3];
     pwd->w[0] = pws->w[1];
@@ -4250,7 +4251,7 @@ void helper_msa_ilvod_b(CPUMIPSState *env,
     wr_t *pws = &(env->active_fpu.fpr[ws].wr);
     wr_t *pwt = &(env->active_fpu.fpr[wt].wr);
 
-#if defined(HOST_WORDS_BIGENDIAN)
+#if HOST_BIG_ENDIAN
     pwd->b[7]  = pwt->b[6];
     pwd->b[6]  = pws->b[6];
     pwd->b[5]  = pwt->b[4];
@@ -4294,7 +4295,7 @@ void helper_msa_ilvod_h(CPUMIPSState *env,
     wr_t *pws = &(env->active_fpu.fpr[ws].wr);
     wr_t *pwt = &(env->active_fpu.fpr[wt].wr);
 
-#if defined(HOST_WORDS_BIGENDIAN)
+#if HOST_BIG_ENDIAN
     pwd->h[3] = pwt->h[2];
     pwd->h[2] = pws->h[2];
     pwd->h[1] = pwt->h[0];
@@ -4322,7 +4323,7 @@ void helper_msa_ilvod_w(CPUMIPSState *env,
     wr_t *pws = &(env->active_fpu.fpr[ws].wr);
     wr_t *pwt = &(env->active_fpu.fpr[wt].wr);
 
-#if defined(HOST_WORDS_BIGENDIAN)
+#if HOST_BIG_ENDIAN
     pwd->w[1] = pwt->w[0];
     pwd->w[0] = pws->w[0];
     pwd->w[3] = pwt->w[2];
@@ -4354,7 +4355,7 @@ void helper_msa_ilvl_b(CPUMIPSState *env,
     wr_t *pws = &(env->active_fpu.fpr[ws].wr);
     wr_t *pwt = &(env->active_fpu.fpr[wt].wr);
 
-#if defined(HOST_WORDS_BIGENDIAN)
+#if HOST_BIG_ENDIAN
     pwd->b[7]  = pwt->b[15];
     pwd->b[6]  = pws->b[15];
     pwd->b[5]  = pwt->b[14];
@@ -4398,7 +4399,7 @@ void helper_msa_ilvl_h(CPUMIPSState *env,
     wr_t *pws = &(env->active_fpu.fpr[ws].wr);
     wr_t *pwt = &(env->active_fpu.fpr[wt].wr);
 
-#if defined(HOST_WORDS_BIGENDIAN)
+#if HOST_BIG_ENDIAN
     pwd->h[3] = pwt->h[7];
     pwd->h[2] = pws->h[7];
     pwd->h[1] = pwt->h[6];
@@ -4426,7 +4427,7 @@ void helper_msa_ilvl_w(CPUMIPSState *env,
     wr_t *pws = &(env->active_fpu.fpr[ws].wr);
     wr_t *pwt = &(env->active_fpu.fpr[wt].wr);
 
-#if defined(HOST_WORDS_BIGENDIAN)
+#if HOST_BIG_ENDIAN
     pwd->w[1] = pwt->w[3];
     pwd->w[0] = pws->w[3];
     pwd->w[3] = pwt->w[2];
@@ -4458,7 +4459,7 @@ void helper_msa_ilvr_b(CPUMIPSState *env,
     wr_t *pws = &(env->active_fpu.fpr[ws].wr);
     wr_t *pwt = &(env->active_fpu.fpr[wt].wr);
 
-#if defined(HOST_WORDS_BIGENDIAN)
+#if HOST_BIG_ENDIAN
     pwd->b[8]  = pws->b[0];
     pwd->b[9]  = pwt->b[0];
     pwd->b[10] = pws->b[1];
@@ -4502,7 +4503,7 @@ void helper_msa_ilvr_h(CPUMIPSState *env,
     wr_t *pws = &(env->active_fpu.fpr[ws].wr);
     wr_t *pwt = &(env->active_fpu.fpr[wt].wr);
 
-#if defined(HOST_WORDS_BIGENDIAN)
+#if HOST_BIG_ENDIAN
     pwd->h[4] = pws->h[0];
     pwd->h[5] = pwt->h[0];
     pwd->h[6] = pws->h[1];
@@ -4530,7 +4531,7 @@ void helper_msa_ilvr_w(CPUMIPSState *env,
     wr_t *pws = &(env->active_fpu.fpr[ws].wr);
     wr_t *pwt = &(env->active_fpu.fpr[wt].wr);
 
-#if defined(HOST_WORDS_BIGENDIAN)
+#if HOST_BIG_ENDIAN
     pwd->w[2] = pws->w[0];
     pwd->w[3] = pwt->w[0];
     pwd->w[0] = pws->w[1];
@@ -4661,7 +4662,7 @@ void helper_msa_pckev_b(CPUMIPSState *env,
     wr_t *pws = &(env->active_fpu.fpr[ws].wr);
     wr_t *pwt = &(env->active_fpu.fpr[wt].wr);
 
-#if defined(HOST_WORDS_BIGENDIAN)
+#if HOST_BIG_ENDIAN
     pwd->b[8]  = pws->b[9];
     pwd->b[10] = pws->b[13];
     pwd->b[12] = pws->b[1];
@@ -4705,7 +4706,7 @@ void helper_msa_pckev_h(CPUMIPSState *env,
     wr_t *pws = &(env->active_fpu.fpr[ws].wr);
     wr_t *pwt = &(env->active_fpu.fpr[wt].wr);
 
-#if defined(HOST_WORDS_BIGENDIAN)
+#if HOST_BIG_ENDIAN
     pwd->h[4] = pws->h[5];
     pwd->h[6] = pws->h[1];
     pwd->h[0] = pwt->h[5];
@@ -4733,7 +4734,7 @@ void helper_msa_pckev_w(CPUMIPSState *env,
     wr_t *pws = &(env->active_fpu.fpr[ws].wr);
     wr_t *pwt = &(env->active_fpu.fpr[wt].wr);
 
-#if defined(HOST_WORDS_BIGENDIAN)
+#if HOST_BIG_ENDIAN
     pwd->w[2] = pws->w[3];
     pwd->w[0] = pwt->w[3];
     pwd->w[3] = pws->w[1];
@@ -4765,7 +4766,7 @@ void helper_msa_pckod_b(CPUMIPSState *env,
     wr_t *pws = &(env->active_fpu.fpr[ws].wr);
     wr_t *pwt = &(env->active_fpu.fpr[wt].wr);
 
-#if defined(HOST_WORDS_BIGENDIAN)
+#if HOST_BIG_ENDIAN
     pwd->b[7]  = pwt->b[6];
     pwd->b[5]  = pwt->b[2];
     pwd->b[3]  = pwt->b[14];
@@ -4810,7 +4811,7 @@ void helper_msa_pckod_h(CPUMIPSState *env,
     wr_t *pws = &(env->active_fpu.fpr[ws].wr);
     wr_t *pwt = &(env->active_fpu.fpr[wt].wr);
 
-#if defined(HOST_WORDS_BIGENDIAN)
+#if HOST_BIG_ENDIAN
     pwd->h[3] = pwt->h[2];
     pwd->h[1] = pwt->h[6];
     pwd->h[7] = pws->h[2];
@@ -4838,7 +4839,7 @@ void helper_msa_pckod_w(CPUMIPSState *env,
     wr_t *pws = &(env->active_fpu.fpr[ws].wr);
     wr_t *pwt = &(env->active_fpu.fpr[wt].wr);
 
-#if defined(HOST_WORDS_BIGENDIAN)
+#if HOST_BIG_ENDIAN
     pwd->w[1] = pwt->w[0];
     pwd->w[3] = pws->w[0];
     pwd->w[0] = pwt->w[2];
@@ -5333,7 +5334,7 @@ void helper_msa_shf_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
     msa_move_v(pwd, pwx);
 }
@@ -5368,7 +5369,7 @@ void helper_msa_ ## helper ## _df(CPUMIPSState *env, uint32_t df,       \
         }                                                               \
         break;                                                          \
     default:                                                            \
-        assert(0);                                                      \
+        g_assert_not_reached();                                         \
     }                                                                   \
 }
 
@@ -5413,7 +5414,7 @@ void helper_msa_ldi_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         }
        break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 }
 
@@ -5461,7 +5462,7 @@ void helper_msa_ ## helper ## _df(CPUMIPSState *env, uint32_t df, uint32_t wd, \
         }                                                               \
         break;                                                          \
     default:                                                            \
-        assert(0);                                                      \
+        g_assert_not_reached();                                         \
     }                                                                   \
 }
 
@@ -5511,7 +5512,7 @@ void helper_msa_ ## helper ## _df(CPUMIPSState *env, uint32_t df,       \
         }                                                               \
         break;                                                          \
     default:                                                            \
-        assert(0);                                                      \
+        g_assert_not_reached();                                         \
     }                                                                   \
 }
 
@@ -5557,7 +5558,7 @@ static inline void msa_sld_df(uint32_t df, wr_t *pwd,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 }
 
@@ -5632,7 +5633,7 @@ void helper_msa_ ## func ## _df(CPUMIPSState *env, uint32_t df,         \
         pwd->d[1] = msa_ ## func ## _df(df, pws->d[1], pwt->d[1]);      \
         break;                                                          \
     default:                                                            \
-        assert(0);                                                      \
+        g_assert_not_reached();                                         \
     }                                                                   \
 }
 
@@ -5771,7 +5772,7 @@ void helper_msa_ ## func ## _df(CPUMIPSState *env, uint32_t df, uint32_t wd,  \
         pwd->d[1] = msa_ ## func ## _df(df, pwd->d[1], pws->d[1], pwt->d[1]); \
         break;                                                                \
     default:                                                                  \
-        assert(0);                                                            \
+        g_assert_not_reached();                                               \
     }                                                                         \
 }
 
@@ -5811,7 +5812,7 @@ static inline void msa_splat_df(uint32_t df, wr_t *pwd,
         }
        break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 }
 
@@ -5869,7 +5870,7 @@ void helper_msa_##FUNC(CPUMIPSState *env, uint32_t df, uint32_t wd, \
         MSA_LOOP_D;                                                 \
         break;                                                      \
     default:                                                        \
-        assert(0);                                                  \
+        g_assert_not_reached();                                     \
     }                                                               \
     msa_move_v(pwd, pwx);                                           \
 }
@@ -5926,7 +5927,7 @@ void helper_msa_copy_s_b(CPUMIPSState *env, uint32_t rd,
                          uint32_t ws, uint32_t n)
 {
     n %= 16;
-#if defined(HOST_WORDS_BIGENDIAN)
+#if HOST_BIG_ENDIAN
     if (n < 8) {
         n = 8 - n - 1;
     } else {
@@ -5940,7 +5941,7 @@ void helper_msa_copy_s_h(CPUMIPSState *env, uint32_t rd,
                          uint32_t ws, uint32_t n)
 {
     n %= 8;
-#if defined(HOST_WORDS_BIGENDIAN)
+#if HOST_BIG_ENDIAN
     if (n < 4) {
         n = 4 - n - 1;
     } else {
@@ -5954,7 +5955,7 @@ void helper_msa_copy_s_w(CPUMIPSState *env, uint32_t rd,
                          uint32_t ws, uint32_t n)
 {
     n %= 4;
-#if defined(HOST_WORDS_BIGENDIAN)
+#if HOST_BIG_ENDIAN
     if (n < 2) {
         n = 2 - n - 1;
     } else {
@@ -5975,7 +5976,7 @@ void helper_msa_copy_u_b(CPUMIPSState *env, uint32_t rd,
                          uint32_t ws, uint32_t n)
 {
     n %= 16;
-#if defined(HOST_WORDS_BIGENDIAN)
+#if HOST_BIG_ENDIAN
     if (n < 8) {
         n = 8 - n - 1;
     } else {
@@ -5989,7 +5990,7 @@ void helper_msa_copy_u_h(CPUMIPSState *env, uint32_t rd,
                          uint32_t ws, uint32_t n)
 {
     n %= 8;
-#if defined(HOST_WORDS_BIGENDIAN)
+#if HOST_BIG_ENDIAN
     if (n < 4) {
         n = 4 - n - 1;
     } else {
@@ -6003,7 +6004,7 @@ void helper_msa_copy_u_w(CPUMIPSState *env, uint32_t rd,
                          uint32_t ws, uint32_t n)
 {
     n %= 4;
-#if defined(HOST_WORDS_BIGENDIAN)
+#if HOST_BIG_ENDIAN
     if (n < 2) {
         n = 2 - n - 1;
     } else {
@@ -6019,7 +6020,7 @@ void helper_msa_insert_b(CPUMIPSState *env, uint32_t wd,
     wr_t *pwd = &(env->active_fpu.fpr[wd].wr);
     target_ulong rs = env->active_tc.gpr[rs_num];
     n %= 16;
-#if defined(HOST_WORDS_BIGENDIAN)
+#if HOST_BIG_ENDIAN
     if (n < 8) {
         n = 8 - n - 1;
     } else {
@@ -6035,7 +6036,7 @@ void helper_msa_insert_h(CPUMIPSState *env, uint32_t wd,
     wr_t *pwd = &(env->active_fpu.fpr[wd].wr);
     target_ulong rs = env->active_tc.gpr[rs_num];
     n %= 8;
-#if defined(HOST_WORDS_BIGENDIAN)
+#if HOST_BIG_ENDIAN
     if (n < 4) {
         n = 4 - n - 1;
     } else {
@@ -6051,7 +6052,7 @@ void helper_msa_insert_w(CPUMIPSState *env, uint32_t wd,
     wr_t *pwd = &(env->active_fpu.fpr[wd].wr);
     target_ulong rs = env->active_tc.gpr[rs_num];
     n %= 4;
-#if defined(HOST_WORDS_BIGENDIAN)
+#if HOST_BIG_ENDIAN
     if (n < 2) {
         n = 2 - n - 1;
     } else {
@@ -6090,7 +6091,7 @@ void helper_msa_insve_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         pwd->d[n] = (int64_t)pws->d[0];
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 }
 
@@ -6150,7 +6151,7 @@ void helper_msa_fill_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         }
        break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 }
 
@@ -6565,7 +6566,7 @@ static inline void compare_af(CPUMIPSState *env, wr_t *pwd, wr_t *pws,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, retaddr);
@@ -6596,7 +6597,7 @@ static inline void compare_un(CPUMIPSState *env, wr_t *pwd, wr_t *pws,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, retaddr);
@@ -6625,7 +6626,7 @@ static inline void compare_eq(CPUMIPSState *env, wr_t *pwd, wr_t *pws,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, retaddr);
@@ -6654,7 +6655,7 @@ static inline void compare_ueq(CPUMIPSState *env, wr_t *pwd, wr_t *pws,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, retaddr);
@@ -6683,7 +6684,7 @@ static inline void compare_lt(CPUMIPSState *env, wr_t *pwd, wr_t *pws,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, retaddr);
@@ -6712,7 +6713,7 @@ static inline void compare_ult(CPUMIPSState *env, wr_t *pwd, wr_t *pws,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, retaddr);
@@ -6741,7 +6742,7 @@ static inline void compare_le(CPUMIPSState *env, wr_t *pwd, wr_t *pws,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, retaddr);
@@ -6770,7 +6771,7 @@ static inline void compare_ule(CPUMIPSState *env, wr_t *pwd, wr_t *pws,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, retaddr);
@@ -6799,7 +6800,7 @@ static inline void compare_or(CPUMIPSState *env, wr_t *pwd, wr_t *pws,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, retaddr);
@@ -6828,7 +6829,7 @@ static inline void compare_une(CPUMIPSState *env, wr_t *pwd, wr_t *pws,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, retaddr);
@@ -6857,7 +6858,7 @@ static inline void compare_ne(CPUMIPSState *env, wr_t *pwd, wr_t *pws,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, retaddr);
@@ -7107,7 +7108,7 @@ void helper_msa_fadd_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, GETPC());
@@ -7137,7 +7138,7 @@ void helper_msa_fsub_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, GETPC());
@@ -7167,7 +7168,7 @@ void helper_msa_fmul_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, GETPC());
@@ -7198,7 +7199,7 @@ void helper_msa_fdiv_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, GETPC());
@@ -7245,7 +7246,7 @@ void helper_msa_fmadd_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, GETPC());
@@ -7280,7 +7281,7 @@ void helper_msa_fmsub_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, GETPC());
@@ -7317,7 +7318,7 @@ void helper_msa_fexp2_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, GETPC());
@@ -7371,7 +7372,7 @@ void helper_msa_fexdo_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, GETPC());
@@ -7417,7 +7418,7 @@ void helper_msa_ftq_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, GETPC());
@@ -7431,15 +7432,15 @@ void helper_msa_ftq_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
 
 #define MSA_FLOAT_MAXOP(DEST, OP, ARG1, ARG2, BITS)                         \
     do {                                                                    \
-        float_status *status = &env->active_tc.msa_fp_status;               \
+        float_status *status_ = &env->active_tc.msa_fp_status;              \
         int c;                                                              \
                                                                             \
-        set_float_exception_flags(0, status);                               \
-        DEST = float ## BITS ## _ ## OP(ARG1, ARG2, status);                \
+        set_float_exception_flags(0, status_);                              \
+        DEST = float ## BITS ## _ ## OP(ARG1, ARG2, status_);               \
         c = update_msacsr(env, 0, 0);                                       \
                                                                             \
         if (get_enabled_exceptions(env, c)) {                               \
-            DEST = ((FLOAT_SNAN ## BITS(status) >> 6) << 6) | c;            \
+            DEST = ((FLOAT_SNAN ## BITS(status_) >> 6) << 6) | c;           \
         }                                                                   \
     } while (0)
 
@@ -7526,7 +7527,7 @@ void helper_msa_fmin_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
 
     } else {
 
-        assert(0);
+        g_assert_not_reached();
 
     }
 
@@ -7555,7 +7556,7 @@ void helper_msa_fmin_a_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         FMAXMIN_A(min, max, pwx->d[0], pws->d[0], pwt->d[0], 64, status);
         FMAXMIN_A(min, max, pwx->d[1], pws->d[1], pwt->d[1], 64, status);
     } else {
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, GETPC());
@@ -7628,7 +7629,7 @@ void helper_msa_fmax_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
 
     } else {
 
-        assert(0);
+        g_assert_not_reached();
 
     }
 
@@ -7657,7 +7658,7 @@ void helper_msa_fmax_a_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         FMAXMIN_A(max, min, pwx->d[0], pws->d[0], pwt->d[0], 64, status);
         FMAXMIN_A(max, min, pwx->d[1], pws->d[1], pwt->d[1], 64, status);
     } else {
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, GETPC());
@@ -7681,7 +7682,7 @@ void helper_msa_fclass_df(CPUMIPSState *env, uint32_t df,
         pwd->d[0] = float_class_d(pws->d[0], status);
         pwd->d[1] = float_class_d(pws->d[1], status);
     } else {
-        assert(0);
+        g_assert_not_reached();
     }
 }
 
@@ -7723,7 +7724,7 @@ void helper_msa_ftrunc_s_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, GETPC());
@@ -7753,7 +7754,7 @@ void helper_msa_ftrunc_u_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, GETPC());
@@ -7783,7 +7784,7 @@ void helper_msa_fsqrt_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, GETPC());
@@ -7832,7 +7833,7 @@ void helper_msa_frsqrt_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, GETPC());
@@ -7862,7 +7863,7 @@ void helper_msa_frcp_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, GETPC());
@@ -7892,7 +7893,7 @@ void helper_msa_frint_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, GETPC());
@@ -7946,7 +7947,7 @@ void helper_msa_flog2_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, GETPC());
@@ -7983,7 +7984,7 @@ void helper_msa_fexupl_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, GETPC());
@@ -8019,7 +8020,7 @@ void helper_msa_fexupr_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, GETPC());
@@ -8046,7 +8047,7 @@ void helper_msa_ffql_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     msa_move_v(pwd, pwx);
@@ -8072,7 +8073,7 @@ void helper_msa_ffqr_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     msa_move_v(pwd, pwx);
@@ -8100,7 +8101,7 @@ void helper_msa_ftint_s_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, GETPC());
@@ -8130,7 +8131,7 @@ void helper_msa_ftint_u_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, GETPC());
@@ -8166,7 +8167,7 @@ void helper_msa_ffint_s_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, GETPC());
@@ -8196,7 +8197,7 @@ void helper_msa_ffint_u_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
         }
         break;
     default:
-        assert(0);
+        g_assert_not_reached();
     }
 
     check_msacsr_cause(env, GETPC());
@@ -8213,12 +8214,12 @@ void helper_msa_ffint_u_df(CPUMIPSState *env, uint32_t df, uint32_t wd,
 #if !defined(CONFIG_USER_ONLY)
 #define MEMOP_IDX(DF)                                                   \
     MemOpIdx oi = make_memop_idx(MO_TE | DF | MO_UNALN,                 \
-                                 cpu_mmu_index(env, false));
+                                 mips_env_mmu_index(env));
 #else
 #define MEMOP_IDX(DF)
 #endif
 
-#ifdef TARGET_WORDS_BIGENDIAN
+#if TARGET_BIG_ENDIAN
 static inline uint64_t bswap16x4(uint64_t x)
 {
     uint64_t m = 0x00ff00ff00ff00ffull;
@@ -8258,7 +8259,7 @@ void helper_msa_ld_h(CPUMIPSState *env, uint32_t wd,
      */
     d0 = cpu_ldq_le_data_ra(env, addr + 0, ra);
     d1 = cpu_ldq_le_data_ra(env, addr + 8, ra);
-#ifdef TARGET_WORDS_BIGENDIAN
+#if TARGET_BIG_ENDIAN
     d0 = bswap16x4(d0);
     d1 = bswap16x4(d1);
 #endif
@@ -8279,7 +8280,7 @@ void helper_msa_ld_w(CPUMIPSState *env, uint32_t wd,
      */
     d0 = cpu_ldq_le_data_ra(env, addr + 0, ra);
     d1 = cpu_ldq_le_data_ra(env, addr + 8, ra);
-#ifdef TARGET_WORDS_BIGENDIAN
+#if TARGET_BIG_ENDIAN
     d0 = bswap32x2(d0);
     d1 = bswap32x2(d1);
 #endif
@@ -8322,21 +8323,21 @@ void helper_msa_st_b(CPUMIPSState *env, uint32_t wd,
                      target_ulong addr)
 {
     wr_t *pwd = &(env->active_fpu.fpr[wd].wr);
-    int mmu_idx = cpu_mmu_index(env, false);
+    int mmu_idx = mips_env_mmu_index(env);
     uintptr_t ra = GETPC();
 
     ensure_writable_pages(env, addr, mmu_idx, ra);
 
     /* Store 8 bytes at a time.  Vector element ordering makes this LE.  */
     cpu_stq_le_data_ra(env, addr + 0, pwd->d[0], ra);
-    cpu_stq_le_data_ra(env, addr + 0, pwd->d[1], ra);
+    cpu_stq_le_data_ra(env, addr + 8, pwd->d[1], ra);
 }
 
 void helper_msa_st_h(CPUMIPSState *env, uint32_t wd,
                      target_ulong addr)
 {
     wr_t *pwd = &(env->active_fpu.fpr[wd].wr);
-    int mmu_idx = cpu_mmu_index(env, false);
+    int mmu_idx = mips_env_mmu_index(env);
     uintptr_t ra = GETPC();
     uint64_t d0, d1;
 
@@ -8345,7 +8346,7 @@ void helper_msa_st_h(CPUMIPSState *env, uint32_t wd,
     /* Store 8 bytes at a time.  See helper_msa_ld_h. */
     d0 = pwd->d[0];
     d1 = pwd->d[1];
-#ifdef TARGET_WORDS_BIGENDIAN
+#if TARGET_BIG_ENDIAN
     d0 = bswap16x4(d0);
     d1 = bswap16x4(d1);
 #endif
@@ -8357,7 +8358,7 @@ void helper_msa_st_w(CPUMIPSState *env, uint32_t wd,
                      target_ulong addr)
 {
     wr_t *pwd = &(env->active_fpu.fpr[wd].wr);
-    int mmu_idx = cpu_mmu_index(env, false);
+    int mmu_idx = mips_env_mmu_index(env);
     uintptr_t ra = GETPC();
     uint64_t d0, d1;
 
@@ -8366,7 +8367,7 @@ void helper_msa_st_w(CPUMIPSState *env, uint32_t wd,
     /* Store 8 bytes at a time.  See helper_msa_ld_w. */
     d0 = pwd->d[0];
     d1 = pwd->d[1];
-#ifdef TARGET_WORDS_BIGENDIAN
+#if TARGET_BIG_ENDIAN
     d0 = bswap32x2(d0);
     d1 = bswap32x2(d1);
 #endif
@@ -8378,7 +8379,7 @@ void helper_msa_st_d(CPUMIPSState *env, uint32_t wd,
                      target_ulong addr)
 {
     wr_t *pwd = &(env->active_fpu.fpr[wd].wr);
-    int mmu_idx = cpu_mmu_index(env, false);
+    int mmu_idx = mips_env_mmu_index(env);
     uintptr_t ra = GETPC();
 
     ensure_writable_pages(env, addr, mmu_idx, GETPC());

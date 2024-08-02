@@ -21,6 +21,8 @@
 
 #ifndef CONFIG_USER_ONLY
 #include "cpu-common.h"
+#include "qemu/rcu.h"
+#include "exec/ramlist.h"
 
 struct RAMBlock {
     struct rcu_head rcu;
@@ -32,16 +34,31 @@ struct RAMBlock {
     ram_addr_t max_length;
     void (*resized)(const char*, uint64_t length, void *host);
     uint32_t flags;
-    /* Protected by iothread lock.  */
+    /* Protected by the BQL.  */
     char idstr[256];
     /* RCU-enabled, writes protected by the ramlist lock */
     QLIST_ENTRY(RAMBlock) next;
     QLIST_HEAD(, RAMBlockNotifier) ramblock_notifiers;
     int fd;
+    uint64_t fd_offset;
+    int guest_memfd;
     size_t page_size;
     /* dirty bitmap used during migration */
     unsigned long *bmap;
-    /* bitmap of already received pages in postcopy */
+
+    /*
+     * Below fields are only used by mapped-ram migration
+     */
+    /* bitmap of pages present in the migration file */
+    unsigned long *file_bmap;
+    /*
+     * offset in the file pages belonging to this ramblock are saved,
+     * used only during migration to a file.
+     */
+    off_t bitmap_offset;
+    uint64_t pages_offset;
+
+    /* Bitmap of already received pages.  Only used on destination side. */
     unsigned long *receivedmap;
 
     /*
@@ -50,6 +67,9 @@ struct RAMBlock {
      * Set this up to non-NULL to enable the capability to postpone
      * and split clearing of dirty bitmap on the remote node (e.g.,
      * KVM).  The bitmap will be set only when doing global sync.
+     *
+     * It is only used during src side of ram migration, and it is
+     * protected by the global ram_state.bitmap_mutex.
      *
      * NOTE: this bitmap is different comparing to the other bitmaps
      * in that one bit can represent multiple guest pages (which is

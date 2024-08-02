@@ -21,7 +21,6 @@
 #include "cpu.h"
 #include "exec/exec-all.h"
 #include "qemu/host-utils.h"
-#include "qemu/main-loop.h"
 #include "exec/helper-proto.h"
 #include "helper_regs.h"
 #include "exec/cpu_ldst.h"
@@ -32,10 +31,10 @@
 
 static inline bool needs_byteswap(const CPUPPCState *env)
 {
-#if defined(TARGET_WORDS_BIGENDIAN)
-  return msr_le;
+#if TARGET_BIG_ENDIAN
+  return FIELD_EX64(env->msr, MSR, LE);
 #else
-  return !msr_le;
+  return !FIELD_EX64(env->msr, MSR, LE);
 #endif
 }
 
@@ -84,7 +83,7 @@ static void *probe_contiguous(CPUPPCState *env, target_ulong addr, uint32_t nb,
 void helper_lmw(CPUPPCState *env, target_ulong addr, uint32_t reg)
 {
     uintptr_t raddr = GETPC();
-    int mmu_idx = cpu_mmu_index(env, false);
+    int mmu_idx = ppc_env_mmu_index(env, false);
     void *host = probe_contiguous(env, addr, (32 - reg) * 4,
                                   MMU_DATA_LOAD, mmu_idx, raddr);
 
@@ -106,7 +105,7 @@ void helper_lmw(CPUPPCState *env, target_ulong addr, uint32_t reg)
 void helper_stmw(CPUPPCState *env, target_ulong addr, uint32_t reg)
 {
     uintptr_t raddr = GETPC();
-    int mmu_idx = cpu_mmu_index(env, false);
+    int mmu_idx = ppc_env_mmu_index(env, false);
     void *host = probe_contiguous(env, addr, (32 - reg) * 4,
                                   MMU_DATA_STORE, mmu_idx, raddr);
 
@@ -136,7 +135,7 @@ static void do_lsw(CPUPPCState *env, target_ulong addr, uint32_t nb,
         return;
     }
 
-    mmu_idx = cpu_mmu_index(env, false);
+    mmu_idx = ppc_env_mmu_index(env, false);
     host = probe_contiguous(env, addr, nb, MMU_DATA_LOAD, mmu_idx, raddr);
 
     if (likely(host)) {
@@ -225,7 +224,7 @@ void helper_stsw(CPUPPCState *env, target_ulong addr, uint32_t nb,
         return;
     }
 
-    mmu_idx = cpu_mmu_index(env, false);
+    mmu_idx = ppc_env_mmu_index(env, false);
     host = probe_contiguous(env, addr, nb, MMU_DATA_STORE, mmu_idx, raddr);
 
     if (likely(host)) {
@@ -272,51 +271,59 @@ void helper_stsw(CPUPPCState *env, target_ulong addr, uint32_t nb,
 }
 
 static void dcbz_common(CPUPPCState *env, target_ulong addr,
-                        uint32_t opcode, bool epid, uintptr_t retaddr)
+                        int mmu_idx, int dcbz_size, uintptr_t retaddr)
 {
-    target_ulong mask, dcbz_size = env->dcache_line_size;
-    uint32_t i;
+    target_ulong mask = ~(target_ulong)(dcbz_size - 1);
     void *haddr;
-    int mmu_idx = epid ? PPC_TLB_EPID_STORE : cpu_mmu_index(env, false);
-
-#if defined(TARGET_PPC64)
-    /* Check for dcbz vs dcbzl on 970 */
-    if (env->excp_model == POWERPC_EXCP_970 &&
-        !(opcode & 0x00200000) && ((env->spr[SPR_970_HID5] >> 7) & 0x3) == 1) {
-        dcbz_size = 32;
-    }
-#endif
 
     /* Align address */
-    mask = ~(dcbz_size - 1);
     addr &= mask;
 
     /* Check reservation */
-    if ((env->reserve_addr & mask) == addr)  {
+    if (unlikely((env->reserve_addr & mask) == addr))  {
         env->reserve_addr = (target_ulong)-1ULL;
     }
 
     /* Try fast path translate */
+#ifdef CONFIG_USER_ONLY
+    haddr = tlb_vaddr_to_host(env, addr, MMU_DATA_STORE, mmu_idx);
+#else
     haddr = probe_write(env, addr, dcbz_size, mmu_idx, retaddr);
-    if (haddr) {
-        memset(haddr, 0, dcbz_size);
-    } else {
+    if (unlikely(!haddr)) {
         /* Slow path */
-        for (i = 0; i < dcbz_size; i += 8) {
+        for (int i = 0; i < dcbz_size; i += 8) {
             cpu_stq_mmuidx_ra(env, addr + i, 0, mmu_idx, retaddr);
         }
+        return;
     }
+#endif
+
+    set_helper_retaddr(retaddr);
+    memset(haddr, 0, dcbz_size);
+    clear_helper_retaddr();
 }
 
-void helper_dcbz(CPUPPCState *env, target_ulong addr, uint32_t opcode)
+void helper_dcbz(CPUPPCState *env, target_ulong addr, int mmu_idx)
 {
-    dcbz_common(env, addr, opcode, false, GETPC());
+    dcbz_common(env, addr, mmu_idx, env->dcache_line_size, GETPC());
 }
 
-void helper_dcbzep(CPUPPCState *env, target_ulong addr, uint32_t opcode)
+#ifdef TARGET_PPC64
+void helper_dcbzl(CPUPPCState *env, target_ulong addr)
 {
-    dcbz_common(env, addr, opcode, true, GETPC());
+    int dcbz_size = env->dcache_line_size;
+
+    /*
+     * The translator checked for POWERPC_EXCP_970.
+     * All that's left is to check HID5.
+     */
+    if (((env->spr[SPR_970_HID5] >> 7) & 0x3) == 1) {
+        dcbz_size = 32;
+    }
+
+    dcbz_common(env, addr, ppc_env_mmu_index(env, false), dcbz_size, GETPC());
 }
+#endif
 
 void helper_icbi(CPUPPCState *env, target_ulong addr)
 {
@@ -367,101 +374,9 @@ target_ulong helper_lscbx(CPUPPCState *env, target_ulong addr, uint32_t reg,
     return i;
 }
 
-#ifdef TARGET_PPC64
-uint64_t helper_lq_le_parallel(CPUPPCState *env, target_ulong addr,
-                               uint32_t opidx)
-{
-    Int128 ret;
-
-    /* We will have raised EXCP_ATOMIC from the translator.  */
-    assert(HAVE_ATOMIC128);
-    ret = cpu_atomic_ldo_le_mmu(env, addr, opidx, GETPC());
-    env->retxh = int128_gethi(ret);
-    return int128_getlo(ret);
-}
-
-uint64_t helper_lq_be_parallel(CPUPPCState *env, target_ulong addr,
-                               uint32_t opidx)
-{
-    Int128 ret;
-
-    /* We will have raised EXCP_ATOMIC from the translator.  */
-    assert(HAVE_ATOMIC128);
-    ret = cpu_atomic_ldo_be_mmu(env, addr, opidx, GETPC());
-    env->retxh = int128_gethi(ret);
-    return int128_getlo(ret);
-}
-
-void helper_stq_le_parallel(CPUPPCState *env, target_ulong addr,
-                            uint64_t lo, uint64_t hi, uint32_t opidx)
-{
-    Int128 val;
-
-    /* We will have raised EXCP_ATOMIC from the translator.  */
-    assert(HAVE_ATOMIC128);
-    val = int128_make128(lo, hi);
-    cpu_atomic_sto_le_mmu(env, addr, val, opidx, GETPC());
-}
-
-void helper_stq_be_parallel(CPUPPCState *env, target_ulong addr,
-                            uint64_t lo, uint64_t hi, uint32_t opidx)
-{
-    Int128 val;
-
-    /* We will have raised EXCP_ATOMIC from the translator.  */
-    assert(HAVE_ATOMIC128);
-    val = int128_make128(lo, hi);
-    cpu_atomic_sto_be_mmu(env, addr, val, opidx, GETPC());
-}
-
-uint32_t helper_stqcx_le_parallel(CPUPPCState *env, target_ulong addr,
-                                  uint64_t new_lo, uint64_t new_hi,
-                                  uint32_t opidx)
-{
-    bool success = false;
-
-    /* We will have raised EXCP_ATOMIC from the translator.  */
-    assert(HAVE_CMPXCHG128);
-
-    if (likely(addr == env->reserve_addr)) {
-        Int128 oldv, cmpv, newv;
-
-        cmpv = int128_make128(env->reserve_val2, env->reserve_val);
-        newv = int128_make128(new_lo, new_hi);
-        oldv = cpu_atomic_cmpxchgo_le_mmu(env, addr, cmpv, newv,
-                                          opidx, GETPC());
-        success = int128_eq(oldv, cmpv);
-    }
-    env->reserve_addr = -1;
-    return env->so + success * CRF_EQ_BIT;
-}
-
-uint32_t helper_stqcx_be_parallel(CPUPPCState *env, target_ulong addr,
-                                  uint64_t new_lo, uint64_t new_hi,
-                                  uint32_t opidx)
-{
-    bool success = false;
-
-    /* We will have raised EXCP_ATOMIC from the translator.  */
-    assert(HAVE_CMPXCHG128);
-
-    if (likely(addr == env->reserve_addr)) {
-        Int128 oldv, cmpv, newv;
-
-        cmpv = int128_make128(env->reserve_val2, env->reserve_val);
-        newv = int128_make128(new_lo, new_hi);
-        oldv = cpu_atomic_cmpxchgo_be_mmu(env, addr, cmpv, newv,
-                                          opidx, GETPC());
-        success = int128_eq(oldv, cmpv);
-    }
-    env->reserve_addr = -1;
-    return env->so + success * CRF_EQ_BIT;
-}
-#endif
-
 /*****************************************************************************/
 /* Altivec extension helpers */
-#if defined(HOST_WORDS_BIGENDIAN)
+#if HOST_BIG_ENDIAN
 #define HI_IDX 0
 #define LO_IDX 1
 #else
@@ -470,8 +385,8 @@ uint32_t helper_stqcx_be_parallel(CPUPPCState *env, target_ulong addr,
 #endif
 
 /*
- * We use msr_le to determine index ordering in a vector.  However,
- * byteswapping is not simply controlled by msr_le.  We also need to
+ * We use MSR_LE to determine index ordering in a vector.  However,
+ * byteswapping is not simply controlled by MSR_LE.  We also need to
  * take into account endianness of the target.  This is done for the
  * little-endian PPC64 user-mode target.
  */
@@ -484,7 +399,7 @@ uint32_t helper_stqcx_be_parallel(CPUPPCState *env, target_ulong addr,
         int adjust = HI_IDX * (n_elems - 1);                    \
         int sh = sizeof(r->element[0]) >> 1;                    \
         int index = (addr & 0xf) >> sh;                         \
-        if (msr_le) {                                           \
+        if (FIELD_EX64(env->msr, MSR, LE)) {                    \
             index = n_elems - index - 1;                        \
         }                                                       \
                                                                 \
@@ -497,9 +412,9 @@ uint32_t helper_stqcx_be_parallel(CPUPPCState *env, target_ulong addr,
         }                                                       \
     }
 #define I(x) (x)
-LVE(lvebx, cpu_ldub_data_ra, I, u8)
-LVE(lvehx, cpu_lduw_data_ra, bswap16, u16)
-LVE(lvewx, cpu_ldl_data_ra, bswap32, u32)
+LVE(LVEBX, cpu_ldub_data_ra, I, u8)
+LVE(LVEHX, cpu_lduw_data_ra, bswap16, u16)
+LVE(LVEWX, cpu_ldl_data_ra, bswap32, u32)
 #undef I
 #undef LVE
 
@@ -511,7 +426,7 @@ LVE(lvewx, cpu_ldl_data_ra, bswap32, u32)
         int adjust = HI_IDX * (n_elems - 1);                            \
         int sh = sizeof(r->element[0]) >> 1;                            \
         int index = (addr & 0xf) >> sh;                                 \
-        if (msr_le) {                                                   \
+        if (FIELD_EX64(env->msr, MSR, LE)) {                            \
             index = n_elems - index - 1;                                \
         }                                                               \
                                                                         \
@@ -525,9 +440,9 @@ LVE(lvewx, cpu_ldl_data_ra, bswap32, u32)
         }                                                               \
     }
 #define I(x) (x)
-STVE(stvebx, cpu_stb_data_ra, I, u8)
-STVE(stvehx, cpu_stw_data_ra, bswap16, u16)
-STVE(stvewx, cpu_stl_data_ra, bswap32, u32)
+STVE(STVEBX, cpu_stb_data_ra, I, u8)
+STVE(STVEHX, cpu_stw_data_ra, bswap16, u16)
+STVE(STVEWX, cpu_stl_data_ra, bswap32, u32)
 #undef I
 #undef LVE
 
@@ -545,7 +460,7 @@ void helper_##name(CPUPPCState *env, target_ulong addr,                 \
     t.s128 = int128_zero();                                             \
     if (nb) {                                                           \
         nb = (nb >= 16) ? 16 : nb;                                      \
-        if (msr_le && !lj) {                                            \
+        if (FIELD_EX64(env->msr, MSR, LE) && !lj) {                     \
             for (i = 16; i > 16 - nb; i--) {                            \
                 t.VsrB(i - 1) = cpu_ldub_data_ra(env, addr, GETPC());   \
                 addr = addr_add(env, addr, 1);                          \
@@ -560,8 +475,8 @@ void helper_##name(CPUPPCState *env, target_ulong addr,                 \
     *xt = t;                                                            \
 }
 
-VSX_LXVL(lxvl, 0)
-VSX_LXVL(lxvll, 1)
+VSX_LXVL(LXVL, 0)
+VSX_LXVL(LXVLL, 1)
 #undef VSX_LXVL
 
 #define VSX_STXVL(name, lj)                                       \
@@ -576,7 +491,7 @@ void helper_##name(CPUPPCState *env, target_ulong addr,           \
     }                                                             \
                                                                   \
     nb = (nb >= 16) ? 16 : nb;                                    \
-    if (msr_le && !lj) {                                          \
+    if (FIELD_EX64(env->msr, MSR, LE) && !lj) {                   \
         for (i = 16; i > 16 - nb; i--) {                          \
             cpu_stb_data_ra(env, addr, xt->VsrB(i - 1), GETPC()); \
             addr = addr_add(env, addr, 1);                        \
@@ -589,8 +504,8 @@ void helper_##name(CPUPPCState *env, target_ulong addr,           \
     }                                                             \
 }
 
-VSX_STXVL(stxvl, 0)
-VSX_STXVL(stxvll, 1)
+VSX_STXVL(STXVL, 0)
+VSX_STXVL(STXVLL, 1)
 #undef VSX_STXVL
 #undef GET_NB
 #endif /* TARGET_PPC64 */
@@ -612,11 +527,12 @@ void helper_tbegin(CPUPPCState *env)
     env->spr[SPR_TEXASR] =
         (1ULL << TEXASR_FAILURE_PERSISTENT) |
         (1ULL << TEXASR_NESTING_OVERFLOW) |
-        (msr_hv << TEXASR_PRIVILEGE_HV) |
-        (msr_pr << TEXASR_PRIVILEGE_PR) |
+        (FIELD_EX64_HV(env->msr) << TEXASR_PRIVILEGE_HV) |
+        (FIELD_EX64(env->msr, MSR, PR) << TEXASR_PRIVILEGE_PR) |
         (1ULL << TEXASR_FAILURE_SUMMARY) |
         (1ULL << TEXASR_TFIAR_EXACT);
-    env->spr[SPR_TFIAR] = env->nip | (msr_hv << 1) | msr_pr;
+    env->spr[SPR_TFIAR] = env->nip | (FIELD_EX64_HV(env->msr) << 1) |
+                          FIELD_EX64(env->msr, MSR, PR);
     env->spr[SPR_TFHAR] = env->nip + 4;
     env->crf[0] = 0xB; /* 0b1010 = transaction failure */
 }

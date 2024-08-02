@@ -68,7 +68,7 @@ static uint64_t clock_get_child_period(Clock *clk)
 {
     /*
      * Return the period to be used for child clocks, which is the parent
-     * clock period adjusted for for multiplier and divider effects.
+     * clock period adjusted for multiplier and divider effects.
      */
     return muldiv64(clk->period, clk->multiplier, clk->divider);
 }
@@ -108,7 +108,6 @@ static void clock_propagate_period(Clock *clk, bool call_callbacks)
 
 void clock_propagate(Clock *clk)
 {
-    assert(clk->source == NULL);
     trace_clock_propagate(CLOCK_PATH(clk));
     clock_propagate_period(clk, true);
 }
@@ -143,14 +142,20 @@ char *clock_display_freq(Clock *clk)
     return freq_to_str(clock_get_hz(clk));
 }
 
-void clock_set_mul_div(Clock *clk, uint32_t multiplier, uint32_t divider)
+bool clock_set_mul_div(Clock *clk, uint32_t multiplier, uint32_t divider)
 {
     assert(divider != 0);
+
+    if (clk->multiplier == multiplier && clk->divider == divider) {
+        return false;
+    }
 
     trace_clock_set_mul_div(CLOCK_PATH(clk), clk->multiplier, multiplier,
                             clk->divider, divider);
     clk->multiplier = multiplier;
     clk->divider = divider;
+
+    return true;
 }
 
 static void clock_initfn(Object *obj)

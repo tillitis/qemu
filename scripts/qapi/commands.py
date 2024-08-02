@@ -25,8 +25,8 @@ from .gen import (
     QAPIGenC,
     QAPISchemaModularCVisitor,
     build_params,
-    ifcontext,
     gen_special_features,
+    ifcontext,
 )
 from .schema import (
     QAPISchema,
@@ -41,11 +41,13 @@ from .source import QAPISourceInfo
 def gen_command_decl(name: str,
                      arg_type: Optional[QAPISchemaObjectType],
                      boxed: bool,
-                     ret_type: Optional[QAPISchemaType]) -> str:
+                     ret_type: Optional[QAPISchemaType],
+                     coroutine: bool) -> str:
     return mcgen('''
-%(c_type)s qmp_%(c_name)s(%(params)s);
+%(c_type)s %(coroutine_fn)sqmp_%(c_name)s(%(params)s);
 ''',
                  c_type=(ret_type and ret_type.c_type()) or 'void',
+                 coroutine_fn='coroutine_fn ' if coroutine else '',
                  c_name=c_name(name),
                  params=build_params(arg_type, boxed, 'Error **errp'))
 
@@ -53,7 +55,8 @@ def gen_command_decl(name: str,
 def gen_call(name: str,
              arg_type: Optional[QAPISchemaObjectType],
              boxed: bool,
-             ret_type: Optional[QAPISchemaType]) -> str:
+             ret_type: Optional[QAPISchemaType],
+             gen_tracing: bool) -> str:
     ret = ''
 
     argstr = ''
@@ -61,9 +64,10 @@ def gen_call(name: str,
         assert arg_type
         argstr = '&arg, '
     elif arg_type:
-        assert not arg_type.variants
+        assert not arg_type.branches
         for memb in arg_type.members:
-            if memb.optional:
+            assert not memb.ifcond.is_present()
+            if memb.need_has():
                 argstr += 'arg.has_%s, ' % c_name(memb.name)
             argstr += 'arg.%s, ' % c_name(memb.name)
 
@@ -71,21 +75,67 @@ def gen_call(name: str,
     if ret_type:
         lhs = 'retval = '
 
-    ret = mcgen('''
+    name = c_name(name)
+    upper = name.upper()
 
-    %(lhs)sqmp_%(c_name)s(%(args)s&err);
-    error_propagate(errp, err);
-''',
-                c_name=c_name(name), args=argstr, lhs=lhs)
-    if ret_type:
+    if gen_tracing:
         ret += mcgen('''
+
+    if (trace_event_get_state_backends(TRACE_QMP_ENTER_%(upper)s)) {
+        g_autoptr(GString) req_json = qobject_to_json(QOBJECT(args));
+
+        trace_qmp_enter_%(name)s(req_json->str);
+    }
+''',
+                     upper=upper, name=name)
+
+    ret += mcgen('''
+
+    %(lhs)sqmp_%(name)s(%(args)s&err);
+''',
+                 name=name, args=argstr, lhs=lhs)
+
+    ret += mcgen('''
     if (err) {
+''')
+
+    if gen_tracing:
+        ret += mcgen('''
+        trace_qmp_exit_%(name)s(error_get_pretty(err), false);
+''',
+                     name=name)
+
+    ret += mcgen('''
+        error_propagate(errp, err);
         goto out;
     }
+''')
+
+    if ret_type:
+        ret += mcgen('''
 
     qmp_marshal_output_%(c_name)s(retval, ret, errp);
 ''',
                      c_name=ret_type.c_name())
+
+    if gen_tracing:
+        if ret_type:
+            ret += mcgen('''
+
+    if (trace_event_get_state_backends(TRACE_QMP_EXIT_%(upper)s)) {
+        g_autoptr(GString) ret_json = qobject_to_json(*ret);
+
+        trace_qmp_exit_%(name)s(ret_json->str, true);
+    }
+''',
+                         upper=upper, name=name)
+        else:
+            ret += mcgen('''
+
+    trace_qmp_exit_%(name)s("{}", true);
+''',
+                         name=name)
+
     return ret
 
 
@@ -110,22 +160,37 @@ static void qmp_marshal_output_%(c_name)s(%(c_type)s ret_in,
                  c_type=ret_type.c_type(), c_name=ret_type.c_name())
 
 
-def build_marshal_proto(name: str) -> str:
-    return ('void qmp_marshal_%s(QDict *args, QObject **ret, Error **errp)'
-            % c_name(name))
+def build_marshal_proto(name: str,
+                        coroutine: bool) -> str:
+    return ('void %(coroutine_fn)sqmp_marshal_%(c_name)s(%(params)s)' % {
+        'coroutine_fn': 'coroutine_fn ' if coroutine else '',
+        'c_name': c_name(name),
+        'params': 'QDict *args, QObject **ret, Error **errp',
+    })
 
 
-def gen_marshal_decl(name: str) -> str:
+def gen_marshal_decl(name: str,
+                     coroutine: bool) -> str:
     return mcgen('''
 %(proto)s;
 ''',
-                 proto=build_marshal_proto(name))
+                 proto=build_marshal_proto(name, coroutine))
+
+
+def gen_trace(name: str) -> str:
+    return mcgen('''
+qmp_enter_%(name)s(const char *json) "%%s"
+qmp_exit_%(name)s(const char *result, bool succeeded) "%%s %%d"
+''',
+                 name=c_name(name))
 
 
 def gen_marshal(name: str,
                 arg_type: Optional[QAPISchemaObjectType],
                 boxed: bool,
-                ret_type: Optional[QAPISchemaType]) -> str:
+                ret_type: Optional[QAPISchemaType],
+                gen_tracing: bool,
+                coroutine: bool) -> str:
     have_args = boxed or (arg_type and not arg_type.is_empty())
     if have_args:
         assert arg_type is not None
@@ -139,7 +204,7 @@ def gen_marshal(name: str,
     bool ok = false;
     Visitor *v;
 ''',
-                proto=build_marshal_proto(name))
+                proto=build_marshal_proto(name, coroutine))
 
     if ret_type:
         ret += mcgen('''
@@ -180,7 +245,7 @@ def gen_marshal(name: str,
     }
 ''')
 
-    ret += gen_call(name, arg_type, boxed, ret_type)
+    ret += gen_call(name, arg_type, boxed, ret_type, gen_tracing)
 
     ret += mcgen('''
 
@@ -238,11 +303,13 @@ def gen_register_command(name: str,
 
 
 class QAPISchemaGenCommandVisitor(QAPISchemaModularCVisitor):
-    def __init__(self, prefix: str):
+    def __init__(self, prefix: str, gen_tracing: bool):
         super().__init__(
             prefix, 'qapi-commands',
-            ' * Schema-defined QAPI/QMP commands', None, __doc__)
+            ' * Schema-defined QAPI/QMP commands', None, __doc__,
+            gen_tracing=gen_tracing)
         self._visited_ret_types: Dict[QAPIGenC, Set[QAPISchemaType]] = {}
+        self._gen_tracing = gen_tracing
 
     def _begin_user_module(self, name: str) -> None:
         self._visited_ret_types[self._genc] = set()
@@ -258,9 +325,18 @@ class QAPISchemaGenCommandVisitor(QAPISchemaModularCVisitor):
 #include "qapi/error.h"
 #include "%(visit)s.h"
 #include "%(commands)s.h"
-
 ''',
                              commands=commands, visit=visit))
+
+        if self._gen_tracing and commands != 'qapi-commands':
+            self._genc.add(mcgen('''
+#include "qapi/qmp/qjson.h"
+#include "trace/trace-%(nm)s_trace_events.h"
+''',
+                                 nm=c_name(commands, protect=False)))
+            # We use c_name(commands, protect=False) to turn '-' into '_', to
+            # match .underscorify() in trace/meson.build
+
         self._genh.add(mcgen('''
 #include "%(types)s.h"
 
@@ -320,9 +396,13 @@ void %(c_prefix)sqmp_init_marshal(QmpCommandList *cmds)
                            self._genh, self._genc):
                 self._genc.add(gen_marshal_output(ret_type))
         with ifcontext(ifcond, self._genh, self._genc):
-            self._genh.add(gen_command_decl(name, arg_type, boxed, ret_type))
-            self._genh.add(gen_marshal_decl(name))
-            self._genc.add(gen_marshal(name, arg_type, boxed, ret_type))
+            self._genh.add(gen_command_decl(name, arg_type, boxed,
+                                            ret_type, coroutine))
+            self._genh.add(gen_marshal_decl(name, coroutine))
+            self._genc.add(gen_marshal(name, arg_type, boxed, ret_type,
+                                       self._gen_tracing, coroutine))
+            if self._gen_tracing:
+                self._gen_trace_events.add(gen_trace(name))
         with self._temp_module('./init'):
             with ifcontext(ifcond, self._genh, self._genc):
                 self._genc.add(gen_register_command(
@@ -332,7 +412,8 @@ void %(c_prefix)sqmp_init_marshal(QmpCommandList *cmds)
 
 def gen_commands(schema: QAPISchema,
                  output_dir: str,
-                 prefix: str) -> None:
-    vis = QAPISchemaGenCommandVisitor(prefix)
+                 prefix: str,
+                 gen_tracing: bool) -> None:
+    vis = QAPISchemaGenCommandVisitor(prefix, gen_tracing)
     schema.visit(vis)
     vis.write(output_dir)

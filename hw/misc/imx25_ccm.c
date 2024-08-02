@@ -91,7 +91,7 @@ static const char *imx25_ccm_reg_name(uint32_t reg)
     case IMX25_CCM_LPIMR1_REG:
         return "lpimr1";
     default:
-        sprintf(unknown, "[%u ?]", reg);
+        snprintf(unknown, sizeof(unknown), "[%u ?]", reg);
         return unknown;
     }
 }
@@ -101,7 +101,7 @@ static const VMStateDescription vmstate_imx25_ccm = {
     .name = TYPE_IMX25_CCM,
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (VMStateField[]) {
+    .fields = (const VMStateField[]) {
         VMSTATE_UINT32_ARRAY(reg, IMX25CCMState, IMX25_CCM_MAX_REG),
         VMSTATE_END_OF_LIST()
     },

@@ -1,9 +1,9 @@
 /*
  * Floating Point Convert Single to Various
  *
- * Copyright (c) 2019 Linaro
+ * Copyright (c) 2019, 2024 Linaro
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
 #include <stdio.h>
@@ -51,8 +51,8 @@ static void convert_single_to_double(float input)
 
     output = input;
 
-    out_fmt = fmt_f64(output);
     flag_fmt = fmt_flags();
+    out_fmt = fmt_f64(output);
     printf("  to double: %s (%s)\n", out_fmt, flag_fmt);
     free(out_fmt);
     free(flag_fmt);

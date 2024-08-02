@@ -10,10 +10,10 @@
 #include "qemu/osdep.h"
 #include "qemu/module.h"
 #include "qemu/units.h"
-#include "libqos/libqtest.h"
+#include "libqtest.h"
 #include "libqos/qgraph.h"
 #include "libqos/pci.h"
-#include "include/block/nvme.h"
+#include "block/nvme.h"
 
 typedef struct QNvme QNvme;
 

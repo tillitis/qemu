@@ -10,7 +10,7 @@
  */
 
 #include "qemu/osdep.h"
-#include "libqos/libqtest.h"
+#include "libqtest.h"
 #include "qapi/qmp/qdict.h"
 #include "qapi/qmp/qlist.h"
 
@@ -125,7 +125,8 @@ static void pc_numa_cpu(const void *data)
     QTestState *qts;
     g_autofree char *cli = NULL;
 
-    cli = make_cli(data, "-cpu pentium -machine smp.cpus=8,smp.sockets=2,smp.cores=2,smp.threads=2 "
+    cli = make_cli(data,
+        "-cpu max -machine smp.cpus=8,smp.sockets=2,smp.cores=2,smp.threads=2 "
         "-numa node,nodeid=0,memdev=ram -numa node,nodeid=1 "
         "-numa cpu,node-id=1,socket-id=0 "
         "-numa cpu,node-id=0,socket-id=1,core-id=0 "
@@ -223,17 +224,18 @@ static void aarch64_numa_cpu(const void *data)
     QTestState *qts;
     g_autofree char *cli = NULL;
 
-    cli = make_cli(data, "-machine smp.cpus=2 "
+    cli = make_cli(data, "-machine "
+        "smp.cpus=2,smp.sockets=2,smp.clusters=1,smp.cores=1,smp.threads=1 "
         "-numa node,nodeid=0,memdev=ram -numa node,nodeid=1 "
-        "-numa cpu,node-id=1,thread-id=0 "
-        "-numa cpu,node-id=0,thread-id=1");
+        "-numa cpu,node-id=0,socket-id=1,cluster-id=0,core-id=0,thread-id=0 "
+        "-numa cpu,node-id=1,socket-id=0,cluster-id=0,core-id=0,thread-id=0");
     qts = qtest_init(cli);
     cpus = get_cpus(qts, &resp);
     g_assert(cpus);
 
     while ((e = qlist_pop(cpus))) {
         QDict *cpu, *props;
-        int64_t thread, node;
+        int64_t socket, cluster, core, thread, node;
 
         cpu = qobject_to(QDict, e);
         g_assert(qdict_haskey(cpu, "props"));
@@ -241,12 +243,66 @@ static void aarch64_numa_cpu(const void *data)
 
         g_assert(qdict_haskey(props, "node-id"));
         node = qdict_get_int(props, "node-id");
+        g_assert(qdict_haskey(props, "socket-id"));
+        socket = qdict_get_int(props, "socket-id");
+        g_assert(qdict_haskey(props, "cluster-id"));
+        cluster = qdict_get_int(props, "cluster-id");
+        g_assert(qdict_haskey(props, "core-id"));
+        core = qdict_get_int(props, "core-id");
         g_assert(qdict_haskey(props, "thread-id"));
         thread = qdict_get_int(props, "thread-id");
 
-        if (thread == 0) {
+        if (socket == 0 && cluster == 0 && core == 0 && thread == 0) {
             g_assert_cmpint(node, ==, 1);
-        } else if (thread == 1) {
+        } else if (socket == 1 && cluster == 0 && core == 0 && thread == 0) {
+            g_assert_cmpint(node, ==, 0);
+        } else {
+            g_assert(false);
+        }
+        qobject_unref(e);
+    }
+
+    qobject_unref(resp);
+    qtest_quit(qts);
+}
+
+static void loongarch64_numa_cpu(const void *data)
+{
+    QDict *resp;
+    QList *cpus;
+    QObject *e;
+    QTestState *qts;
+    g_autofree char *cli = NULL;
+
+    cli = make_cli(data, "-machine "
+        "smp.cpus=2,smp.sockets=2,smp.cores=1,smp.threads=1 "
+        "-numa node,nodeid=0,memdev=ram -numa node,nodeid=1 "
+        "-numa cpu,node-id=0,socket-id=1,core-id=0,thread-id=0 "
+        "-numa cpu,node-id=1,socket-id=0,core-id=0,thread-id=0");
+    qts = qtest_init(cli);
+    cpus = get_cpus(qts, &resp);
+    g_assert(cpus);
+
+    while ((e = qlist_pop(cpus))) {
+        QDict *cpu, *props;
+        int64_t socket, core, thread, node;
+
+        cpu = qobject_to(QDict, e);
+        g_assert(qdict_haskey(cpu, "props"));
+        props = qdict_get_qdict(cpu, "props");
+
+        g_assert(qdict_haskey(props, "node-id"));
+        node = qdict_get_int(props, "node-id");
+        g_assert(qdict_haskey(props, "socket-id"));
+        socket = qdict_get_int(props, "socket-id");
+        g_assert(qdict_haskey(props, "core-id"));
+        core = qdict_get_int(props, "core-id");
+        g_assert(qdict_haskey(props, "thread-id"));
+        thread = qdict_get_int(props, "thread-id");
+
+        if (socket == 0 && core == 0 && thread == 0) {
+            g_assert_cmpint(node, ==, 1);
+        } else if (socket == 1 && core == 0 && thread == 0) {
             g_assert_cmpint(node, ==, 0);
         } else {
             g_assert(false);
@@ -551,6 +607,9 @@ int main(int argc, char **argv)
     }
 
     if (g_str_equal(arch, "aarch64")) {
+        if (!qtest_has_machine("virt")) {
+            goto out;
+        }
         g_string_append(args, " -machine virt");
     }
 
@@ -561,12 +620,17 @@ int main(int argc, char **argv)
     qtest_add_data_func("/numa/mon/cpus/partial", args, test_mon_partial);
     qtest_add_data_func("/numa/qmp/cpus/query-cpus", args, test_query_cpus);
 
-    if (!strcmp(arch, "i386") || !strcmp(arch, "x86_64")) {
+    if (!strcmp(arch, "x86_64")) {
         qtest_add_data_func("/numa/pc/cpu/explicit", args, pc_numa_cpu);
         qtest_add_data_func("/numa/pc/dynamic/cpu", args, pc_dynamic_cpu_cfg);
         qtest_add_data_func("/numa/pc/hmat/build", args, pc_hmat_build_cfg);
         qtest_add_data_func("/numa/pc/hmat/off", args, pc_hmat_off_cfg);
         qtest_add_data_func("/numa/pc/hmat/erange", args, pc_hmat_erange_cfg);
+    }
+
+    if (!strcmp(arch, "i386")) {
+        qtest_add_data_func("/numa/pc/cpu/explicit", args, pc_numa_cpu);
+        qtest_add_data_func("/numa/pc/dynamic/cpu", args, pc_dynamic_cpu_cfg);
     }
 
     if (!strcmp(arch, "ppc64")) {
@@ -578,5 +642,11 @@ int main(int argc, char **argv)
                             aarch64_numa_cpu);
     }
 
+    if (!strcmp(arch, "loongarch64")) {
+        qtest_add_data_func("/numa/loongarch64/cpu/explicit", args,
+                            loongarch64_numa_cpu);
+    }
+
+out:
     return g_test_run();
 }

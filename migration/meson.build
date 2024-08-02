@@ -1,35 +1,47 @@
 # Files needed by unit tests
 migration_files = files(
+  'migration-stats.c',
   'page_cache.c',
   'xbzrle.c',
   'vmstate-types.c',
   'vmstate.c',
-  'qemu-file-channel.c',
   'qemu-file.c',
   'yank_functions.c',
 )
-softmmu_ss.add(migration_files)
 
-softmmu_ss.add(files(
+system_ss.add(files(
   'block-dirty-bitmap.c',
   'channel.c',
-  'colo-failover.c',
-  'colo.c',
+  'channel-block.c',
+  'dirtyrate.c',
   'exec.c',
   'fd.c',
+  'file.c',
   'global_state.c',
+  'migration-hmp-cmds.c',
   'migration.c',
   'multifd.c',
   'multifd-zlib.c',
+  'multifd-zero-page.c',
+  'options.c',
   'postcopy-ram.c',
   'savevm.c',
   'socket.c',
   'tls.c',
-), gnutls)
+  'threadinfo.c',
+), gnutls, zlib)
 
-softmmu_ss.add(when: ['CONFIG_RDMA', rdma], if_true: files('rdma.c'))
-softmmu_ss.add(when: 'CONFIG_LIVE_BLOCK_MIGRATION', if_true: files('block.c'))
-softmmu_ss.add(when: zstd, if_true: files('multifd-zstd.c'))
+if get_option('replication').allowed()
+  system_ss.add(files('colo-failover.c', 'colo.c'))
+else
+  system_ss.add(files('colo-stubs.c'))
+endif
 
-specific_ss.add(when: 'CONFIG_SOFTMMU',
-                if_true: files('dirtyrate.c', 'ram.c', 'target.c'))
+system_ss.add(when: rdma, if_true: files('rdma.c'))
+system_ss.add(when: zstd, if_true: files('multifd-zstd.c'))
+system_ss.add(when: qpl, if_true: files('multifd-qpl.c'))
+system_ss.add(when: uadk, if_true: files('multifd-uadk.c'))
+
+specific_ss.add(when: 'CONFIG_SYSTEM_ONLY',
+                if_true: files('ram.c',
+                               'target.c'))

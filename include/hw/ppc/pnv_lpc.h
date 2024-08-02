@@ -1,7 +1,7 @@
 /*
  * QEMU PowerPC PowerNV LPC controller
  *
- * Copyright (c) 2016, IBM Corporation.
+ * Copyright (c) 2016-2022, IBM Corporation.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -20,8 +20,10 @@
 #ifndef PPC_PNV_LPC_H
 #define PPC_PNV_LPC_H
 
-#include "hw/ppc/pnv_psi.h"
-#include "qom/object.h"
+#include "exec/memory.h"
+#include "hw/ppc/pnv.h"
+#include "hw/qdev-core.h"
+#include "hw/isa/isa.h" /* For ISA_NUM_IRQS */
 
 #define TYPE_PNV_LPC "pnv-lpc"
 typedef struct PnvLpcClass PnvLpcClass;
@@ -72,6 +74,9 @@ struct PnvLpcController {
     uint32_t opb_irq_pol;
     uint32_t opb_irq_input;
 
+    /* LPC device IRQ state */
+    uint32_t lpc_hc_irq_inputs;
+
     /* LPC HC registers */
     uint32_t lpc_hc_fw_seg_idsel;
     uint32_t lpc_hc_fw_rd_acc_size;
@@ -83,26 +88,34 @@ struct PnvLpcController {
     /* XSCOM registers */
     MemoryRegion xscom_regs;
 
-    /* PSI to generate interrupts */
-    PnvPsi *psi;
-};
+    /*
+     * In P8, ISA irqs are combined with internal sources to drive the
+     * LPCHC interrupt output. P9 ISA irqs raise one of 4 lines that
+     * drive PSI SERIRQ irqs, routing according to OPB routing registers.
+     */
+    bool psi_has_serirq;
 
+    /* PSI to generate interrupts */
+    qemu_irq psi_irq_lpchc;
+
+    /* P9 serirq lines and irq routing table */
+    qemu_irq psi_irq_serirq[4];
+    int irq_to_serirq_route[ISA_NUM_IRQS];
+};
 
 struct PnvLpcClass {
     DeviceClass parent_class;
 
-    int psi_irq;
-
     DeviceRealize parent_realize;
 };
 
-/*
- * Old compilers error on typdef forward declarations. Keep them happy.
- */
-struct PnvChip;
+bool pnv_lpc_opb_read(PnvLpcController *lpc, uint32_t addr,
+                      uint8_t *data, int sz);
+bool pnv_lpc_opb_write(PnvLpcController *lpc, uint32_t addr,
+                       uint8_t *data, int sz);
 
 ISABus *pnv_lpc_isa_create(PnvLpcController *lpc, bool use_cpld, Error **errp);
-int pnv_dt_lpc(struct PnvChip *chip, void *fdt, int root_offset,
+int pnv_dt_lpc(PnvChip *chip, void *fdt, int root_offset,
                uint64_t lpcm_addr, uint64_t lpcm_size);
 
 #endif /* PPC_PNV_LPC_H */

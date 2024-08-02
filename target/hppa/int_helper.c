@@ -23,12 +23,12 @@
 #include "cpu.h"
 #include "exec/helper-proto.h"
 #include "hw/core/cpu.h"
+#include "hw/hppa/hppa_hardware.h"
 
-#ifndef CONFIG_USER_ONLY
 static void eval_interrupt(HPPACPU *cpu)
 {
     CPUState *cs = CPU(cpu);
-    if (cpu->env.cr[CR_EIRR] & cpu->env.cr[CR_EIEM]) {
+    if (cpu->env.cr[CR_EIRR]) {
         cpu_interrupt(cs, CPU_INTERRUPT_HARD);
     } else {
         cpu_reset_interrupt(cs, CPU_INTERRUPT_HARD);
@@ -37,7 +37,7 @@ static void eval_interrupt(HPPACPU *cpu)
 
 /* Each CPU has a word mapped into the GSC bus.  Anything on the GSC bus
  * can write to this word to raise an external interrupt on the target CPU.
- * This includes the system controler (DINO) for regular devices, or
+ * This includes the system controller (DINO) for regular devices, or
  * another CPU for SMP interprocessor interrupts.
  */
 static uint64_t io_eir_read(void *opaque, hwaddr addr, unsigned size)
@@ -52,9 +52,17 @@ static void io_eir_write(void *opaque, hwaddr addr,
                          uint64_t data, unsigned size)
 {
     HPPACPU *cpu = opaque;
-    int le_bit = ~data & (TARGET_REGISTER_BITS - 1);
+    CPUHPPAState *env = &cpu->env;
+    int widthm1 = 31;
+    int le_bit;
 
-    cpu->env.cr[CR_EIRR] |= (target_ureg)1 << le_bit;
+    /* The default PSW.W controls the width of EIRR. */
+    if (hppa_is_pa20(env) && env->cr[CR_PSW_DEFAULT] & PDC_PSW_WIDE_BIT) {
+        widthm1 = 63;
+    }
+    le_bit = ~data & widthm1;
+
+    env->cr[CR_EIRR] |= 1ull << le_bit;
     eval_interrupt(cpu);
 }
 
@@ -73,20 +81,12 @@ void hppa_cpu_alarm_timer(void *opaque)
     io_eir_write(opaque, 0, 0, 4);
 }
 
-void HELPER(write_eirr)(CPUHPPAState *env, target_ureg val)
+void HELPER(write_eirr)(CPUHPPAState *env, target_ulong val)
 {
     env->cr[CR_EIRR] &= ~val;
-    qemu_mutex_lock_iothread();
+    bql_lock();
     eval_interrupt(env_archcpu(env));
-    qemu_mutex_unlock_iothread();
-}
-
-void HELPER(write_eiem)(CPUHPPAState *env, target_ureg val)
-{
-    env->cr[CR_EIEM] = val;
-    qemu_mutex_lock_iothread();
-    eval_interrupt(env_archcpu(env));
-    qemu_mutex_unlock_iothread();
+    bql_unlock();
 }
 
 void hppa_cpu_do_interrupt(CPUState *cs)
@@ -94,25 +94,39 @@ void hppa_cpu_do_interrupt(CPUState *cs)
     HPPACPU *cpu = HPPA_CPU(cs);
     CPUHPPAState *env = &cpu->env;
     int i = cs->exception_index;
-    target_ureg iaoq_f = env->iaoq_f;
-    target_ureg iaoq_b = env->iaoq_b;
-    uint64_t iasq_f = env->iasq_f;
-    uint64_t iasq_b = env->iasq_b;
-
-    target_ureg old_psw;
+    uint64_t old_psw;
 
     /* As documented in pa2.0 -- interruption handling.  */
     /* step 1 */
     env->cr[CR_IPSW] = old_psw = cpu_hppa_get_psw(env);
 
-    /* step 2 -- note PSW_W == 0 for !HPPA64.  */
-    cpu_hppa_put_psw(env, PSW_W | (i == EXCP_HPMC ? PSW_M : 0));
+    /* step 2 -- Note PSW_W is masked out again for pa1.x */
+    cpu_hppa_put_psw(env,
+                     (env->cr[CR_PSW_DEFAULT] & PDC_PSW_WIDE_BIT ? PSW_W : 0) |
+                     (i == EXCP_HPMC ? PSW_M : 0));
 
     /* step 3 */
-    env->cr[CR_IIASQ] = iasq_f >> 32;
-    env->cr_back[0] = iasq_b >> 32;
-    env->cr[CR_IIAOQ] = iaoq_f;
-    env->cr_back[1] = iaoq_b;
+    /*
+     * IIASQ is the top bits of the virtual address, or zero if translation
+     * is disabled -- with PSW_W == 0, this will reduce to the space.
+     */
+    if (old_psw & PSW_C) {
+        env->cr[CR_IIASQ] =
+            hppa_form_gva_psw(old_psw, env->iasq_f, env->iaoq_f) >> 32;
+        env->cr_back[0] =
+            hppa_form_gva_psw(old_psw, env->iasq_b, env->iaoq_b) >> 32;
+    } else {
+        env->cr[CR_IIASQ] = 0;
+        env->cr_back[0] = 0;
+    }
+    /* IIAOQ is the full offset for wide mode, or 32 bits for narrow mode. */
+    if (old_psw & PSW_W) {
+        env->cr[CR_IIAOQ] = env->iaoq_f;
+        env->cr_back[1] = env->iaoq_b;
+    } else {
+        env->cr[CR_IIAOQ] = (uint32_t)env->iaoq_f;
+        env->cr_back[1] = (uint32_t)env->iaoq_b;
+    }
 
     if (old_psw & PSW_Q) {
         /* step 5 */
@@ -120,13 +134,13 @@ void hppa_cpu_do_interrupt(CPUState *cs)
         switch (i) {
         case EXCP_ILL:
         case EXCP_BREAK:
+        case EXCP_OVERFLOW:
+        case EXCP_COND:
         case EXCP_PRIV_REG:
         case EXCP_PRIV_OPR:
             /* IIR set via translate.c.  */
             break;
 
-        case EXCP_OVERFLOW:
-        case EXCP_COND:
         case EXCP_ASSIST:
         case EXCP_DTLB_MISS:
         case EXCP_NA_ITLB_MISS:
@@ -145,14 +159,13 @@ void hppa_cpu_do_interrupt(CPUState *cs)
                 /* ??? An alternate fool-proof method would be to store the
                    instruction data into the unwind info.  That's probably
                    a bit too much in the way of extra storage required.  */
-                vaddr vaddr;
-                hwaddr paddr;
+                vaddr vaddr = env->iaoq_f & -4;
+                hwaddr paddr = vaddr;
 
-                paddr = vaddr = iaoq_f & -4;
                 if (old_psw & PSW_C) {
                     int prot, t;
 
-                    vaddr = hppa_form_gva_psw(old_psw, iasq_f, vaddr);
+                    vaddr = hppa_form_gva_psw(old_psw, env->iasq_f, vaddr);
                     t = hppa_get_physical_address(env, vaddr, MMU_KERNEL_IDX,
                                                   0, &paddr, &prot);
                     if (t >= 0) {
@@ -181,8 +194,15 @@ void hppa_cpu_do_interrupt(CPUState *cs)
     }
 
     /* step 7 */
-    env->iaoq_f = env->cr[CR_IVA] + 32 * i;
-    env->iaoq_b = env->iaoq_f + 4;
+    if (i == EXCP_TOC) {
+        env->iaoq_f = hppa_form_gva(env, 0, FIRMWARE_START);
+        /* help SeaBIOS and provide iaoq_b and iasq_back in shadow regs */
+        env->gr[24] = env->cr_back[0];
+        env->gr[25] = env->cr_back[1];
+    } else {
+        env->iaoq_f = hppa_form_gva(env, 0, env->cr[CR_IVA] + 32 * i);
+    }
+    env->iaoq_b = hppa_form_gva(env, 0, env->iaoq_f + 4);
     env->iasq_f = 0;
     env->iasq_b = 0;
 
@@ -219,26 +239,24 @@ void hppa_cpu_do_interrupt(CPUState *cs)
             [EXCP_PER_INTERRUPT] = "performance monitor interrupt",
             [EXCP_SYSCALL]       = "syscall",
             [EXCP_SYSCALL_LWS]   = "syscall-lws",
+            [EXCP_TOC]           = "TOC (transfer of control)",
         };
-        static int count;
-        const char *name = NULL;
-        char unknown[16];
 
-        if (i >= 0 && i < ARRAY_SIZE(names)) {
-            name = names[i];
+        FILE *logfile = qemu_log_trylock();
+        if (logfile) {
+            const char *name = NULL;
+
+            if (i >= 0 && i < ARRAY_SIZE(names)) {
+                name = names[i];
+            }
+            if (name) {
+                fprintf(logfile, "INT: cpu %d %s\n", cs->cpu_index, name);
+            } else {
+                fprintf(logfile, "INT: cpu %d unknown %d\n", cs->cpu_index, i);
+            }
+            hppa_cpu_dump_state(cs, logfile, 0);
+            qemu_log_unlock(logfile);
         }
-        if (!name) {
-            snprintf(unknown, sizeof(unknown), "unknown %d", i);
-            name = unknown;
-        }
-        qemu_log("INT %6d: %s @ " TARGET_FMT_lx "," TARGET_FMT_lx
-                 " -> " TREG_FMT_lx " " TARGET_FMT_lx "\n",
-                 ++count, name,
-                 hppa_form_gva(env, iasq_f, iaoq_f),
-                 hppa_form_gva(env, iasq_b, iaoq_b),
-                 env->iaoq_f,
-                 hppa_form_gva(env, (uint64_t)env->cr[CR_ISR] << 32,
-                               env->cr[CR_IOR]));
     }
     cs->exception_index = -1;
 }
@@ -248,13 +266,21 @@ bool hppa_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
     HPPACPU *cpu = HPPA_CPU(cs);
     CPUHPPAState *env = &cpu->env;
 
+    if (interrupt_request & CPU_INTERRUPT_NMI) {
+        /* Raise TOC (NMI) interrupt */
+        cpu_reset_interrupt(cs, CPU_INTERRUPT_NMI);
+        cs->exception_index = EXCP_TOC;
+        hppa_cpu_do_interrupt(cs);
+        return true;
+    }
+
     /* If interrupts are requested and enabled, raise them.  */
-    if ((env->psw & PSW_I) && (interrupt_request & CPU_INTERRUPT_HARD)) {
+    if ((interrupt_request & CPU_INTERRUPT_HARD)
+        && (env->psw & PSW_I)
+        && (env->cr[CR_EIRR] & env->cr[CR_EIEM])) {
         cs->exception_index = EXCP_EXT_INTERRUPT;
         hppa_cpu_do_interrupt(cs);
         return true;
     }
     return false;
 }
-
-#endif /* !CONFIG_USER_ONLY */

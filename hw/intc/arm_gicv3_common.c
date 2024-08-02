@@ -24,6 +24,7 @@
 #include "qemu/osdep.h"
 #include "qapi/error.h"
 #include "qemu/module.h"
+#include "qemu/error-report.h"
 #include "hw/core/cpu.h"
 #include "hw/intc/arm_gicv3_common.h"
 #include "hw/qdev-properties.h"
@@ -104,7 +105,7 @@ static const VMStateDescription vmstate_gicv3_cpu_virt = {
     .version_id = 1,
     .minimum_version_id = 1,
     .needed = virt_state_needed,
-    .fields = (VMStateField[]) {
+    .fields = (const VMStateField[]) {
         VMSTATE_UINT64_2DARRAY(ich_apr, GICv3CPUState, 3, 4),
         VMSTATE_UINT64(ich_hcr_el2, GICv3CPUState),
         VMSTATE_UINT64_ARRAY(ich_lr_el2, GICv3CPUState, GICV3_LR_MAX),
@@ -138,8 +139,45 @@ const VMStateDescription vmstate_gicv3_cpu_sre_el1 = {
     .version_id = 1,
     .minimum_version_id = 1,
     .needed = icc_sre_el1_reg_needed,
-    .fields = (VMStateField[]) {
+    .fields = (const VMStateField[]) {
         VMSTATE_UINT64(icc_sre_el1, GICv3CPUState),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static bool gicv4_needed(void *opaque)
+{
+    GICv3CPUState *cs = opaque;
+
+    return cs->gic->revision > 3;
+}
+
+const VMStateDescription vmstate_gicv3_gicv4 = {
+    .name = "arm_gicv3_cpu/gicv4",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .needed = gicv4_needed,
+    .fields = (const VMStateField[]) {
+        VMSTATE_UINT64(gicr_vpropbaser, GICv3CPUState),
+        VMSTATE_UINT64(gicr_vpendbaser, GICv3CPUState),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static bool gicv3_cpu_nmi_needed(void *opaque)
+{
+    GICv3CPUState *cs = opaque;
+
+    return cs->gic->nmi_support;
+}
+
+static const VMStateDescription vmstate_gicv3_cpu_nmi = {
+    .name = "arm_gicv3_cpu/nmi",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .needed = gicv3_cpu_nmi_needed,
+    .fields = (const VMStateField[]) {
+        VMSTATE_UINT32(gicr_inmir0, GICv3CPUState),
         VMSTATE_END_OF_LIST()
     }
 };
@@ -149,7 +187,7 @@ static const VMStateDescription vmstate_gicv3_cpu = {
     .version_id = 1,
     .minimum_version_id = 1,
     .pre_load = vmstate_gicv3_cpu_pre_load,
-    .fields = (VMStateField[]) {
+    .fields = (const VMStateField[]) {
         VMSTATE_UINT32(level, GICv3CPUState),
         VMSTATE_UINT32(gicr_ctlr, GICv3CPUState),
         VMSTATE_UINT32_ARRAY(gicr_statusr, GICv3CPUState, 2),
@@ -172,9 +210,11 @@ static const VMStateDescription vmstate_gicv3_cpu = {
         VMSTATE_UINT64(icc_ctlr_el3, GICv3CPUState),
         VMSTATE_END_OF_LIST()
     },
-    .subsections = (const VMStateDescription * []) {
+    .subsections = (const VMStateDescription * const []) {
         &vmstate_gicv3_cpu_virt,
         &vmstate_gicv3_cpu_sre_el1,
+        &vmstate_gicv3_gicv4,
+        &vmstate_gicv3_cpu_nmi,
         NULL
     }
 };
@@ -211,8 +251,26 @@ const VMStateDescription vmstate_gicv3_gicd_no_migration_shift_bug = {
     .version_id = 1,
     .minimum_version_id = 1,
     .needed = needed_always,
-    .fields = (VMStateField[]) {
+    .fields = (const VMStateField[]) {
         VMSTATE_BOOL(gicd_no_migration_shift_bug, GICv3State),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static bool gicv3_nmi_needed(void *opaque)
+{
+    GICv3State *cs = opaque;
+
+    return cs->nmi_support;
+}
+
+const VMStateDescription vmstate_gicv3_gicd_nmi = {
+    .name = "arm_gicv3/gicd_nmi",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .needed = gicv3_nmi_needed,
+    .fields = (const VMStateField[]) {
+        VMSTATE_UINT32_ARRAY(nmi, GICv3State, GICV3_BMP_SIZE),
         VMSTATE_END_OF_LIST()
     }
 };
@@ -225,7 +283,7 @@ static const VMStateDescription vmstate_gicv3 = {
     .pre_save = gicv3_pre_save,
     .post_load = gicv3_post_load,
     .priority = MIG_PRI_GICV3,
-    .fields = (VMStateField[]) {
+    .fields = (const VMStateField[]) {
         VMSTATE_UINT32(gicd_ctlr, GICv3State),
         VMSTATE_UINT32_ARRAY(gicd_statusr, GICv3State, 2),
         VMSTATE_UINT32_ARRAY(group, GICv3State, GICV3_BMP_SIZE),
@@ -243,8 +301,9 @@ static const VMStateDescription vmstate_gicv3 = {
                                              vmstate_gicv3_cpu, GICv3CPUState),
         VMSTATE_END_OF_LIST()
     },
-    .subsections = (const VMStateDescription * []) {
+    .subsections = (const VMStateDescription * const []) {
         &vmstate_gicv3_gicd_no_migration_shift_bug,
+        &vmstate_gicv3_gicd_nmi,
         NULL
     }
 };
@@ -278,6 +337,12 @@ void gicv3_init_irqs_and_mmio(GICv3State *s, qemu_irq_handler handler,
     for (i = 0; i < s->num_cpu; i++) {
         sysbus_init_irq(sbd, &s->cpu[i].parent_vfiq);
     }
+    for (i = 0; i < s->num_cpu; i++) {
+        sysbus_init_irq(sbd, &s->cpu[i].parent_nmi);
+    }
+    for (i = 0; i < s->num_cpu; i++) {
+        sysbus_init_irq(sbd, &s->cpu[i].parent_vnmi);
+    }
 
     memory_region_init_io(&s->iomem_dist, OBJECT(s), ops, s,
                           "gicv3_dist", 0x10000);
@@ -295,7 +360,7 @@ void gicv3_init_irqs_and_mmio(GICv3State *s, qemu_irq_handler handler,
 
         memory_region_init_io(&region->iomem, OBJECT(s),
                               ops ? &ops[1] : NULL, region, name,
-                              s->redist_region_count[i] * GICV3_REDIST_SIZE);
+                              s->redist_region_count[i] * gicv3_redist_size(s));
         sysbus_init_mmio(sbd, &region->iomem);
         g_free(name);
     }
@@ -306,12 +371,14 @@ static void arm_gicv3_common_realize(DeviceState *dev, Error **errp)
     GICv3State *s = ARM_GICV3_COMMON(dev);
     int i, rdist_capacity, cpuidx;
 
-    /* revision property is actually reserved and currently used only in order
-     * to keep the interface compatible with GICv2 code, avoiding extra
-     * conditions. However, in future it could be used, for example, if we
-     * implement GICv4.
+    /*
+     * This GIC device supports only revisions 3 and 4. The GICv1/v2
+     * is a separate device.
+     * Note that subclasses of this device may impose further restrictions
+     * on the GIC revision: notably, the in-kernel KVM GIC doesn't
+     * support GICv4.
      */
-    if (s->revision != 3) {
+    if (s->revision != 3 && s->revision != 4) {
         error_setg(errp, "unsupported GIC revision %d", s->revision);
         return;
     }
@@ -326,6 +393,10 @@ static void arm_gicv3_common_realize(DeviceState *dev, Error **errp)
         error_setg(errp,
                    "requested %u interrupt lines is below GIC minimum %d",
                    s->num_irq, GIC_INTERNAL);
+        return;
+    }
+    if (s->num_cpu == 0) {
+        error_setg(errp, "num-cpu must be at least 1");
         return;
     }
 
@@ -350,11 +421,16 @@ static void arm_gicv3_common_realize(DeviceState *dev, Error **errp)
     for (i = 0; i < s->nb_redist_regions; i++) {
         rdist_capacity += s->redist_region_count[i];
     }
-    if (rdist_capacity < s->num_cpu) {
+    if (rdist_capacity != s->num_cpu) {
         error_setg(errp, "Capacity of the redist regions(%d) "
-                   "is less than number of vcpus(%d)",
+                   "does not match the number of vcpus(%d)",
                    rdist_capacity, s->num_cpu);
         return;
+    }
+
+    if (s->lpi_enable) {
+        address_space_init(&s->dma_as, s->dma,
+                           "gicv3-its-sysmem");
     }
 
     s->cpu = g_new0(GICv3CPUState, s->num_cpu);
@@ -377,8 +453,8 @@ static void arm_gicv3_common_realize(DeviceState *dev, Error **errp)
          *  Last == 1 if this is the last redistributor in a series of
          *            contiguous redistributor pages
          *  DirectLPI == 0 (direct injection of LPIs not supported)
-         *  VLPIS == 0 (virtual LPIs not supported)
-         *  PLPIS == 0 (physical LPIs not supported)
+         *  VLPIS == 1 if vLPIs supported (GICv4 and up)
+         *  PLPIS == 1 if LPIs supported
          */
         cpu_affid = object_property_get_uint(OBJECT(cpu), "mp-affinity", NULL);
 
@@ -393,6 +469,9 @@ static void arm_gicv3_common_realize(DeviceState *dev, Error **errp)
 
         if (s->lpi_enable) {
             s->cpu[i].gicr_typer |= GICR_TYPER_PLPIS;
+            if (s->revision > 3) {
+                s->cpu[i].gicr_typer |= GICR_TYPER_VLPIS;
+            }
         }
     }
 
@@ -405,6 +484,8 @@ static void arm_gicv3_common_realize(DeviceState *dev, Error **errp)
         cpuidx += s->redist_region_count[i];
         s->cpu[cpuidx - 1].gicr_typer |= GICR_TYPER_LAST;
     }
+
+    s->itslist = g_ptr_array_new();
 }
 
 static void arm_gicv3_finalize(Object *obj)
@@ -414,9 +495,9 @@ static void arm_gicv3_finalize(Object *obj)
     g_free(s->redist_region_count);
 }
 
-static void arm_gicv3_common_reset(DeviceState *dev)
+static void arm_gicv3_common_reset_hold(Object *obj, ResetType type)
 {
-    GICv3State *s = ARM_GICV3_COMMON(dev);
+    GICv3State *s = ARM_GICV3_COMMON(obj);
     int i;
 
     for (i = 0; i < s->num_cpu; i++) {
@@ -424,11 +505,17 @@ static void arm_gicv3_common_reset(DeviceState *dev)
 
         cs->level = 0;
         cs->gicr_ctlr = 0;
+        if (s->lpi_enable) {
+            /* Our implementation supports clearing GICR_CTLR.EnableLPIs */
+            cs->gicr_ctlr |= GICR_CTLR_CES;
+        }
         cs->gicr_statusr[GICV3_S] = 0;
         cs->gicr_statusr[GICV3_NS] = 0;
         cs->gicr_waker = GICR_WAKER_ProcessorSleep | GICR_WAKER_ChildrenAsleep;
         cs->gicr_propbaser = 0;
         cs->gicr_pendbaser = 0;
+        cs->gicr_vpropbaser = 0;
+        cs->gicr_vpendbaser = 0;
         /* If we're resetting a TZ-aware GIC as if secure firmware
          * had set it up ready to start a kernel in non-secure, we
          * need to set interrupts to group 1 so the kernel can use them.
@@ -449,7 +536,11 @@ static void arm_gicv3_common_reset(DeviceState *dev)
         memset(cs->gicr_ipriorityr, 0, sizeof(cs->gicr_ipriorityr));
 
         cs->hppi.prio = 0xff;
+        cs->hppi.nmi = false;
         cs->hpplpi.prio = 0xff;
+        cs->hpplpi.nmi = false;
+        cs->hppvlpi.prio = 0xff;
+        cs->hppvlpi.nmi = false;
 
         /* State in the CPU interface must *not* be reset here, because it
          * is part of the CPU's reset domain, not the GIC device's.
@@ -519,7 +610,13 @@ static Property arm_gicv3_common_properties[] = {
     DEFINE_PROP_UINT32("num-irq", GICv3State, num_irq, 32),
     DEFINE_PROP_UINT32("revision", GICv3State, revision, 3),
     DEFINE_PROP_BOOL("has-lpi", GICv3State, lpi_enable, 0),
+    DEFINE_PROP_BOOL("has-nmi", GICv3State, nmi_support, 0),
     DEFINE_PROP_BOOL("has-security-extensions", GICv3State, security_extn, 0),
+    /*
+     * Compatibility property: force 8 bits of physical priority, even
+     * if the CPU being emulated should have fewer.
+     */
+    DEFINE_PROP_BOOL("force-8-bit-prio", GICv3State, force_8bit_prio, 0),
     DEFINE_PROP_ARRAY("redist-region-count", GICv3State, nb_redist_regions,
                       redist_region_count, qdev_prop_uint32, uint32_t),
     DEFINE_PROP_LINK("sysmem", GICv3State, dma, TYPE_MEMORY_REGION,
@@ -530,9 +627,10 @@ static Property arm_gicv3_common_properties[] = {
 static void arm_gicv3_common_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
+    ResettableClass *rc = RESETTABLE_CLASS(klass);
     ARMLinuxBootIfClass *albifc = ARM_LINUX_BOOT_IF_CLASS(klass);
 
-    dc->reset = arm_gicv3_common_reset;
+    rc->phases.hold = arm_gicv3_common_reset_hold;
     dc->realize = arm_gicv3_common_realize;
     device_class_set_props(dc, arm_gicv3_common_properties);
     dc->vmsd = &vmstate_gicv3;
@@ -559,3 +657,16 @@ static void register_types(void)
 }
 
 type_init(register_types)
+
+const char *gicv3_class_name(void)
+{
+    if (kvm_irqchip_in_kernel()) {
+        return "kvm-arm-gicv3";
+    } else {
+        if (kvm_enabled()) {
+            error_report("Userspace GICv3 is not supported with KVM");
+            exit(1);
+        }
+        return "arm-gicv3";
+    }
+}

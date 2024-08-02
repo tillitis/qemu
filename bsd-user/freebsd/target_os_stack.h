@@ -17,15 +17,16 @@
  *  along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef _TARGET_OS_STACK_H_
-#define _TARGET_OS_STACK_H_
+#ifndef TARGET_OS_STACK_H
+#define TARGET_OS_STACK_H
 
 #include <sys/param.h>
 #include "target_arch_sigtramp.h"
 #include "qemu/guest-random.h"
+#include "user/tswap-target.h"
 
 /*
- * The inital FreeBSD stack is as follows:
+ * The initial FreeBSD stack is as follows:
  * (see kern/kern_exec.c exec_copyout_strings() )
  *
  *  Hi Address -> char **ps_argvstr  (struct ps_strings for ps, w, etc.)
@@ -59,7 +60,7 @@ static inline int setup_initial_stack(struct bsd_binprm *bprm,
     /* Save some space for ps_strings. */
     p -= sizeof(struct target_ps_strings);
 
-    /* Add machine depedent sigcode. */
+    /* Add machine dependent sigcode. */
     p -= TARGET_SZSIGCODE;
     if (setup_sigtramp(p, (unsigned)offsetof(struct target_sigframe, sf_uc),
             TARGET_FREEBSD_NR_sigreturn)) {
@@ -178,4 +179,4 @@ static inline int setup_initial_stack(struct bsd_binprm *bprm,
     return 0;
  }
 
-#endif /* !_TARGET_OS_STACK_H_ */
+#endif /* TARGET_OS_STACK_H */

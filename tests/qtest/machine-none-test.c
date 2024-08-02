@@ -12,9 +12,8 @@
 
 #include "qemu/osdep.h"
 
-#include "qemu-common.h"
 #include "qemu/cutils.h"
-#include "libqos/libqtest.h"
+#include "libqtest.h"
 #include "qapi/qmp/qdict.h"
 
 
@@ -39,7 +38,6 @@ static struct arch2cpu cpus_map[] = {
     { "mipsel", "I7200" },
     { "mips64", "20Kc" },
     { "mips64el", "I6500" },
-    { "nios2", "FIXME" },
     { "or1k", "or1200" },
     { "ppc", "604" },
     { "ppc64", "power8e_v2.1" },
@@ -55,6 +53,7 @@ static struct arch2cpu cpus_map[] = {
     { "riscv64", "rv64" },
     { "riscv32", "rv32" },
     { "rx", "rx62n" },
+    { "loongarch64", "la464"},
 };
 
 static const char *get_cpu_model_by_arch(const char *arch)
@@ -81,7 +80,7 @@ static void test_machine_cpu_cli(void)
                 " add it to cpus_map\n", arch);
         return; /* TODO: die here to force all targets have a test */
     }
-    qts = qtest_initf("-machine none -cpu '%s'", cpu_model);
+    qts = qtest_initf("-machine none -cpu \"%s\"", cpu_model);
 
     response = qtest_qmp(qts, "{ 'execute': 'quit' }");
     g_assert(qdict_haskey(response, "return"));

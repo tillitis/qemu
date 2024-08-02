@@ -10,13 +10,11 @@
  */
 
 #include "qemu/osdep.h"
-#include "qemu-common.h"
 #include "qemu/timer.h"
 #include "qemu/range.h"
 #include "qemu/units.h"
 #include "qemu/log.h"
 #include "qapi/error.h"
-#include "exec/ram_addr.h"
 #include "exec/address-spaces.h"
 #include "hw/ppc/vof.h"
 #include "hw/ppc/fdt.h"
@@ -295,7 +293,7 @@ static uint32_t vof_setprop(MachineState *ms, void *fdt, Vof *vof,
                             uint32_t nodeph, uint32_t pname,
                             uint32_t valaddr, uint32_t vallen)
 {
-    char propname[OF_PROPNAME_LEN_MAX + 1];
+    char propname[OF_PROPNAME_LEN_MAX + 1] = "";
     uint32_t ret = PROM_ERROR;
     int offset, rc;
     char trval[64] = "";
@@ -648,7 +646,7 @@ static void vof_dt_memory_available(void *fdt, GArray *claimed, uint64_t base)
     mem0_reg = fdt_getprop(fdt, offset, "reg", &proplen);
     g_assert(mem0_reg && proplen == sizeof(uint32_t) * (ac + sc));
     if (sc == 2) {
-        mem0_end = be64_to_cpu(*(uint64_t *)(mem0_reg + sizeof(uint32_t) * ac));
+        mem0_end = ldq_be_p(mem0_reg + sizeof(uint32_t) * ac);
     } else {
         mem0_end = be32_to_cpu(*(uint32_t *)(mem0_reg + sizeof(uint32_t) * ac));
     }
@@ -1026,6 +1024,8 @@ void vof_cleanup(Vof *vof)
     }
     vof->claimed = NULL;
     vof->of_instances = NULL;
+    vof->of_instance_last = 0;
+    vof->claimed_base = 0;
 }
 
 void vof_build_dt(void *fdt, Vof *vof)

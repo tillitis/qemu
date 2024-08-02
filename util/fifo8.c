@@ -16,12 +16,17 @@
 #include "migration/vmstate.h"
 #include "qemu/fifo8.h"
 
+void fifo8_reset(Fifo8 *fifo)
+{
+    fifo->num = 0;
+    fifo->head = 0;
+}
+
 void fifo8_create(Fifo8 *fifo, uint32_t capacity)
 {
     fifo->data = g_new(uint8_t, capacity);
     fifo->capacity = capacity;
-    fifo->head = 0;
-    fifo->num = 0;
+    fifo8_reset(fifo);
 }
 
 void fifo8_destroy(Fifo8 *fifo)
@@ -66,23 +71,70 @@ uint8_t fifo8_pop(Fifo8 *fifo)
     return ret;
 }
 
-const uint8_t *fifo8_pop_buf(Fifo8 *fifo, uint32_t max, uint32_t *num)
+static const uint8_t *fifo8_peekpop_buf(Fifo8 *fifo, uint32_t max,
+                                        uint32_t *numptr, bool do_pop)
 {
     uint8_t *ret;
+    uint32_t num;
 
     assert(max > 0 && max <= fifo->num);
-    *num = MIN(fifo->capacity - fifo->head, max);
+    num = MIN(fifo->capacity - fifo->head, max);
     ret = &fifo->data[fifo->head];
-    fifo->head += *num;
-    fifo->head %= fifo->capacity;
-    fifo->num -= *num;
+
+    if (do_pop) {
+        fifo->head += num;
+        fifo->head %= fifo->capacity;
+        fifo->num -= num;
+    }
+    if (numptr) {
+        *numptr = num;
+    }
     return ret;
 }
 
-void fifo8_reset(Fifo8 *fifo)
+const uint8_t *fifo8_peek_bufptr(Fifo8 *fifo, uint32_t max, uint32_t *numptr)
 {
-    fifo->num = 0;
-    fifo->head = 0;
+    return fifo8_peekpop_buf(fifo, max, numptr, false);
+}
+
+const uint8_t *fifo8_pop_bufptr(Fifo8 *fifo, uint32_t max, uint32_t *numptr)
+{
+    return fifo8_peekpop_buf(fifo, max, numptr, true);
+}
+
+uint32_t fifo8_pop_buf(Fifo8 *fifo, uint8_t *dest, uint32_t destlen)
+{
+    const uint8_t *buf;
+    uint32_t n1, n2 = 0;
+    uint32_t len;
+
+    if (destlen == 0) {
+        return 0;
+    }
+
+    len = destlen;
+    buf = fifo8_pop_bufptr(fifo, len, &n1);
+    if (dest) {
+        memcpy(dest, buf, n1);
+    }
+
+    /* Add FIFO wraparound if needed */
+    len -= n1;
+    len = MIN(len, fifo8_num_used(fifo));
+    if (len) {
+        buf = fifo8_pop_bufptr(fifo, len, &n2);
+        if (dest) {
+            memcpy(&dest[n1], buf, n2);
+        }
+    }
+
+    return n1 + n2;
+}
+
+void fifo8_drop(Fifo8 *fifo, uint32_t len)
+{
+    len -= fifo8_pop_buf(fifo, NULL, len);
+    assert(len == 0);
 }
 
 bool fifo8_is_empty(Fifo8 *fifo)
@@ -109,7 +161,7 @@ const VMStateDescription vmstate_fifo8 = {
     .name = "Fifo8",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (VMStateField[]) {
+    .fields = (const VMStateField[]) {
         VMSTATE_VBUFFER_UINT32(data, Fifo8, 1, NULL, capacity),
         VMSTATE_UINT32(head, Fifo8),
         VMSTATE_UINT32(num, Fifo8),

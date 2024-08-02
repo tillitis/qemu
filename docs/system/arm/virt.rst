@@ -26,7 +26,7 @@ The virt board supports:
 
 - PCI/PCIe devices
 - Flash memory
-- One PL011 UART
+- Either one or two PL011 UARTs for the NonSecure World
 - An RTC
 - The fw_cfg device that allows a guest to obtain data from QEMU
 - A PL061 GPIO controller
@@ -48,19 +48,43 @@ The virt board supports:
   - A secure flash memory
   - 16MB of secure RAM
 
+The second NonSecure UART only exists if a backend is configured
+explicitly (e.g. with a second -serial command line option) and
+TrustZone emulation is not enabled.
+
 Supported guest CPU types:
 
 - ``cortex-a7`` (32-bit)
 - ``cortex-a15`` (32-bit; the default)
+- ``cortex-a35`` (64-bit)
 - ``cortex-a53`` (64-bit)
+- ``cortex-a55`` (64-bit)
 - ``cortex-a57`` (64-bit)
 - ``cortex-a72`` (64-bit)
+- ``cortex-a76`` (64-bit)
+- ``cortex-a710`` (64-bit)
 - ``a64fx`` (64-bit)
 - ``host`` (with KVM only)
+- ``neoverse-n1`` (64-bit)
+- ``neoverse-v1`` (64-bit)
+- ``neoverse-n2`` (64-bit)
 - ``max`` (same as ``host`` for KVM; best possible emulation with TCG)
 
 Note that the default is ``cortex-a15``, so for an AArch64 guest you must
 specify a CPU type.
+
+Also, please note that passing ``max`` CPU (i.e. ``-cpu max``) won't
+enable all the CPU features for a given ``virt`` machine. Where a CPU
+architectural feature requires support in both the CPU itself and in the
+wider system (e.g. the MTE feature), it may not be enabled by default,
+but instead requires a machine option to enable it.
+
+For example, MTE support must be enabled with ``-machine virt,mte=on``,
+as well as by selecting an MTE-capable CPU (e.g., ``max``) with the
+``-cpu`` option.
+
+See the machine-specific options below, or check them for a given machine
+by passing the ``help`` suboption, like: ``-machine virt-9.0,help``.
 
 Graphics output is available, but unlike the x86 PC machine types
 there is no default display device enabled: you should select one from
@@ -89,21 +113,47 @@ mte
 highmem
   Set ``on``/``off`` to enable/disable placing devices and RAM in physical
   address space above 32 bits. The default is ``on`` for machine types
-  later than ``virt-2.12``.
+  later than ``virt-2.12`` when the CPU supports an address space
+  bigger than 32 bits (i.e. 64-bit CPUs, and 32-bit CPUs with the
+  Large Physical Address Extension (LPAE) feature). If you want to
+  boot a 32-bit kernel which does not have ``CONFIG_LPAE`` enabled on
+  a CPU type which implements LPAE, you will need to manually set
+  this to ``off``; otherwise some devices, such as the PCI controller,
+  will not be accessible.
+
+compact-highmem
+  Set ``on``/``off`` to enable/disable the compact layout for high memory regions.
+  The default is ``on`` for machine types later than ``virt-7.2``.
+
+highmem-redists
+  Set ``on``/``off`` to enable/disable the high memory region for GICv3 or
+  GICv4 redistributor. The default is ``on``. Setting this to ``off`` will
+  limit the maximum number of CPUs when GICv3 or GICv4 is used.
+
+highmem-ecam
+  Set ``on``/``off`` to enable/disable the high memory region for PCI ECAM.
+  The default is ``on`` for machine types later than ``virt-3.0``.
+
+highmem-mmio
+  Set ``on``/``off`` to enable/disable the high memory region for PCI MMIO.
+  The default is ``on``.
 
 gic-version
   Specify the version of the Generic Interrupt Controller (GIC) to provide.
   Valid values are:
 
   ``2``
-    GICv2
+    GICv2. Note that this limits the number of CPUs to 8.
   ``3``
-    GICv3
+    GICv3. This allows up to 512 CPUs.
+  ``4``
+    GICv4. Requires ``virtualization`` to be ``on``; allows up to 317 CPUs.
   ``host``
     Use the same GIC version the host provides, when using KVM
   ``max``
     Use the best GIC version possible (same as host when using KVM;
-    currently same as ``3``` for TCG, but this may change in future)
+    with TCG this is currently ``3`` if ``virtualization`` is ``off`` and
+    ``4`` if ``virtualization`` is ``on``, but this may change in future)
 
 its
   Set ``on``/``off`` to enable/disable ITS instantiation. The default is ``on``
@@ -120,6 +170,19 @@ iommu
 ras
   Set ``on``/``off`` to enable/disable reporting host memory errors to a guest
   using ACPI and guest external abort exceptions. The default is off.
+
+dtb-randomness
+  Set ``on``/``off`` to pass random seeds via the guest DTB
+  rng-seed and kaslr-seed nodes (in both "/chosen" and
+  "/secure-chosen") to use for features like the random number
+  generator and address space randomisation. The default is
+  ``on``. You will want to disable it if your trusted boot chain
+  will verify the DTB it is passed, since this option causes the
+  DTB to be non-deterministic. It would be the responsibility of
+  the firmware to come up with a seed and pass it on if it wants to.
+
+dtb-kaslr-seed
+  A deprecated synonym for dtb-randomness.
 
 Linux guest kernel configuration
 """"""""""""""""""""""""""""""""

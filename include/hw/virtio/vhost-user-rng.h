@@ -6,28 +6,19 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
-#ifndef _QEMU_VHOST_USER_RNG_H
-#define _QEMU_VHOST_USER_RNG_H
+#ifndef QEMU_VHOST_USER_RNG_H
+#define QEMU_VHOST_USER_RNG_H
 
 #include "hw/virtio/virtio.h"
 #include "hw/virtio/vhost.h"
 #include "hw/virtio/vhost-user.h"
-#include "chardev/char-fe.h"
+#include "hw/virtio/vhost-user-base.h"
 
 #define TYPE_VHOST_USER_RNG "vhost-user-rng"
 OBJECT_DECLARE_SIMPLE_TYPE(VHostUserRNG, VHOST_USER_RNG)
 
 struct VHostUserRNG {
-    /*< private >*/
-    VirtIODevice parent;
-    CharBackend chardev;
-    struct vhost_virtqueue *vhost_vq;
-    struct vhost_dev vhost_dev;
-    VhostUserState vhost_user;
-    VirtQueue *req_vq;
-    bool connected;
-
-    /*< public >*/
+    VHostUserBase parent_obj;
 };
 
-#endif /* _QEMU_VHOST_USER_RNG_H */
+#endif /* QEMU_VHOST_USER_RNG_H */
