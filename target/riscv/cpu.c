@@ -735,11 +735,17 @@ static void rv32e_bare_cpu_init(Object *obj)
 static void rv32_tillitis_picorv32_cpu_init(Object *obj)
 {
     CPURISCVState *env = &RISCV_CPU(obj)->env;
+    RISCVCPU *cpu = RISCV_CPU(obj);
+
     /* TODO: We should set RVZMMUL instead of RVM. Looks like QEMU 7.2 will
      * have support for that. */
-    set_misa(env, MXL_RV32, RVI | RVM | RVC);
-    qdev_prop_set_bit(DEVICE(obj), "mmu", false);
-    qdev_prop_set_bit(DEVICE(obj), "pmp", false);
+    riscv_cpu_set_misa_ext(env, RVI | RVM | RVC);
+    cpu->cfg.mmu = false;
+    cpu->cfg.pmp = false;
+
+#ifndef CONFIG_USER_ONLY
+    set_satp_mode_max_supported(RISCV_CPU(obj), VM_1_10_MBARE);
+#endif
 }
 #endif
 
@@ -2969,6 +2975,7 @@ static const TypeInfo riscv_cpu_type_infos[] = {
     DEFINE_VENDOR_CPU(TYPE_RISCV_CPU_SIFIVE_E31, MXL_RV32,  rv32_sifive_e_cpu_init),
     DEFINE_VENDOR_CPU(TYPE_RISCV_CPU_SIFIVE_E34, MXL_RV32,  rv32_imafcu_nommu_cpu_init),
     DEFINE_VENDOR_CPU(TYPE_RISCV_CPU_SIFIVE_U34, MXL_RV32,  rv32_sifive_u_cpu_init),
+    DEFINE_VENDOR_CPU(TYPE_RISCV_CPU_TILLITIS_PICORV32, MXL_RV32,  rv32_tillitis_picorv32_cpu_init),
     DEFINE_BARE_CPU(TYPE_RISCV_CPU_RV32I,        MXL_RV32,  rv32i_bare_cpu_init),
     DEFINE_BARE_CPU(TYPE_RISCV_CPU_RV32E,        MXL_RV32,  rv32e_bare_cpu_init),
 #elif defined(TARGET_RISCV64)
