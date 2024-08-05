@@ -1,7 +1,7 @@
 /*
  * Tillitis TKey Memory Map
  *
- * Copyright (c) 2022, 2023, 2024 Tillitis AB
+ * Copyright (c) 2022-2024 Tillitis AB
  * SPDX-License-Identifier: GPL-2.0-or-later
  *
  * Note that this file is also included in at least qemu

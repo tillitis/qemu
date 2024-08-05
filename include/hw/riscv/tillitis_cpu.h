@@ -1,7 +1,7 @@
 /*
  * Tillitis CPU types
  *
- * Copyright (c) 2022 Tillitis AB
+ * Copyright (c) 2022-2024 Tillitis AB
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
