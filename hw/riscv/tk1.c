@@ -508,8 +508,14 @@ static void tk1_board_init(MachineState *machine)
         exit(EXIT_FAILURE);
     }
 
-    riscv_load_firmware(machine->firmware, memmap[TK1_ROM].base, htif_symbol_callback);
-    //htif_mm_init(sys_mem, &s->rom, &s->cpus.harts[0].env, serial_hd(0));
+    if (s->htif_enabled) {
+        printf("Enabling HTIF (for debug output from firmware, which must be built *without* -DNOCONSOLE)\n");
+        riscv_load_firmware(machine->firmware, memmap[TK1_ROM].base, htif_symbol_callback);
+        htif_mm_init(sys_mem, serial_hd(0), 0, 0);
+    } else {
+        printf("HTIF not enabled (no debug output from firmware)\n");
+        riscv_load_firmware(machine->firmware, memmap[TK1_ROM].base, NULL);
+    }
 }
 
 static void tk1_machine_instance_init(Object *obj)
@@ -537,6 +543,14 @@ static char * tk1_machine_get_chardev(Object *obj, Error **errp)
     return NULL;
 }
 
+static void tk1_machine_set_htif_enabled(Object *obj,
+                                    const bool value, Error **errp)
+{
+    TK1State *s = TK1_MACHINE(obj);
+
+    s->htif_enabled = value;
+}
+
 static void tk1_machine_instance_finalize(Object *obj)
 {
     TK1State *s = TK1_MACHINE(obj);
@@ -560,6 +574,9 @@ static void tk1_machine_class_init(ObjectClass *oc, void *data)
                                   tk1_machine_get_chardev,
                                   tk1_machine_set_chardev);
 
+    object_class_property_add_bool(oc, "htif",
+                                   NULL,
+                                   tk1_machine_set_htif_enabled);
 }
 
 static const TypeInfo tk1_machine_typeinfo = {
