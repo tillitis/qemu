@@ -28,7 +28,7 @@
 #
 
 # creator
-owner=mreitz@redhat.com
+owner=hreitz@redhat.com
 
 seq="$(basename $0)"
 echo "QA output created by $seq"
@@ -50,7 +50,7 @@ trap "_cleanup; exit \$status" 0 1 2 3 15
 . ./common.qemu
 
 _supported_fmt qcow2 qed
-_supported_proto generic
+_supported_proto file
 # Copying files around with cp does not work with external data files
 _unsupported_imgopts data_file
 

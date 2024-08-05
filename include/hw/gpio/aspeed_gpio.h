@@ -50,10 +50,24 @@ enum GPIORegType {
     gpio_reg_input_mask,
 };
 
+/* GPIO index mode */
+enum GPIORegIndexType {
+    gpio_reg_idx_data = 0,
+    gpio_reg_idx_direction,
+    gpio_reg_idx_interrupt,
+    gpio_reg_idx_debounce,
+    gpio_reg_idx_tolerance,
+    gpio_reg_idx_cmd_src,
+    gpio_reg_idx_input_mask,
+    gpio_reg_idx_reserved,
+    gpio_reg_idx_new_w_cmd_src,
+    gpio_reg_idx_new_r_cmd_src,
+};
+
 typedef struct AspeedGPIOReg {
     uint16_t set_idx;
     enum GPIORegType type;
- } AspeedGPIOReg;
+} AspeedGPIOReg;
 
 struct AspeedGPIOClass {
     SysBusDevice parent_obj;
@@ -61,6 +75,7 @@ struct AspeedGPIOClass {
     uint32_t nr_gpio_pins;
     uint32_t nr_gpio_sets;
     const AspeedGPIOReg *reg_table;
+    unsigned reg_table_count;
 };
 
 struct AspeedGPIOState {
@@ -93,4 +108,4 @@ struct AspeedGPIOState {
     } sets[ASPEED_GPIO_MAX_NR_SETS];
 };
 
-#endif /* _ASPEED_GPIO_H_ */
+#endif /* ASPEED_GPIO_H */

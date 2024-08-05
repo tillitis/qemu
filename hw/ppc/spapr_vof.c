@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 #include "qemu/osdep.h"
-#include "qemu-common.h"
 #include "qapi/error.h"
 #include "hw/ppc/spapr.h"
 #include "hw/ppc/spapr_vio.h"
@@ -29,7 +28,7 @@ target_ulong spapr_h_vof_client(PowerPCCPU *cpu, SpaprMachineState *spapr,
 
 void spapr_vof_client_dt_finalize(SpaprMachineState *spapr, void *fdt)
 {
-    char *stdout_path = spapr_vio_stdout_path(spapr->vio_bus);
+    g_autofree char *stdout_path = spapr_vio_stdout_path(spapr->vio_bus);
 
     vof_build_dt(fdt, spapr->vof);
 
@@ -88,8 +87,6 @@ void spapr_vof_reset(SpaprMachineState *spapr, void *fdt, Error **errp)
     spapr_cpu_set_entry_state(first_ppc_cpu, SPAPR_ENTRY_POINT,
                               stack_ptr, spapr->initrd_base,
                               spapr->initrd_size);
-    /* VOF is 32bit BE so enforce MSR here */
-    first_ppc_cpu->env.msr &= ~((1ULL << MSR_SF) | (1ULL << MSR_LE));
 
     /*
      * At this point the expected allocation map is:

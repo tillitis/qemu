@@ -1,5 +1,3 @@
-Formatting 'TEST_DIR/PID-base', fmt=qcow2 cluster_size=65536 extended_l2=off compression_type=zlib size=67108864 lazy_refcounts=off refcount_bits=16
-
 === Launch VM ===
 Enabling migration QMP events on VM...
 {"return": {}}
@@ -14,7 +12,7 @@ Enabling migration QMP events on VM...
 VM is now stopped:
 completed
 {"execute": "query-status", "arguments": {}}
-{"return": {"running": false, "singlestep": false, "status": "postmigrate"}}
+{"return": {"running": false, "status": "postmigrate"}}
 
 === Create a snapshot of the disk image ===
 {"execute": "blockdev-create", "arguments": {"job-id": "job0", "options": {"driver": "file", "filename": "TEST_DIR/PID-top", "size": 0}}}

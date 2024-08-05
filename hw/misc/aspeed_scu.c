@@ -134,6 +134,48 @@
 
 #define AST2600_CLK TO_REG(0x40)
 
+#define AST2700_SILICON_REV       TO_REG(0x00)
+#define AST2700_HW_STRAP1         TO_REG(0x10)
+#define AST2700_HW_STRAP1_CLR     TO_REG(0x14)
+#define AST2700_HW_STRAP1_LOCK    TO_REG(0x20)
+#define AST2700_HW_STRAP1_SEC1    TO_REG(0x24)
+#define AST2700_HW_STRAP1_SEC2    TO_REG(0x28)
+#define AST2700_HW_STRAP1_SEC3    TO_REG(0x2C)
+
+#define AST2700_SCU_CLK_SEL_1       TO_REG(0x280)
+#define AST2700_SCU_HPLL_PARAM      TO_REG(0x300)
+#define AST2700_SCU_HPLL_EXT_PARAM  TO_REG(0x304)
+#define AST2700_SCU_DPLL_PARAM      TO_REG(0x308)
+#define AST2700_SCU_DPLL_EXT_PARAM  TO_REG(0x30c)
+#define AST2700_SCU_MPLL_PARAM      TO_REG(0x310)
+#define AST2700_SCU_MPLL_EXT_PARAM  TO_REG(0x314)
+#define AST2700_SCU_D1CLK_PARAM     TO_REG(0x320)
+#define AST2700_SCU_D2CLK_PARAM     TO_REG(0x330)
+#define AST2700_SCU_CRT1CLK_PARAM   TO_REG(0x340)
+#define AST2700_SCU_CRT2CLK_PARAM   TO_REG(0x350)
+#define AST2700_SCU_MPHYCLK_PARAM   TO_REG(0x360)
+#define AST2700_SCU_FREQ_CNTR       TO_REG(0x3b0)
+#define AST2700_SCU_CPU_SCRATCH_0   TO_REG(0x780)
+#define AST2700_SCU_CPU_SCRATCH_1   TO_REG(0x784)
+
+#define AST2700_SCUIO_CLK_STOP_CTL_1    TO_REG(0x240)
+#define AST2700_SCUIO_CLK_STOP_CLR_1    TO_REG(0x244)
+#define AST2700_SCUIO_CLK_STOP_CTL_2    TO_REG(0x260)
+#define AST2700_SCUIO_CLK_STOP_CLR_2    TO_REG(0x264)
+#define AST2700_SCUIO_CLK_SEL_1         TO_REG(0x280)
+#define AST2700_SCUIO_CLK_SEL_2         TO_REG(0x284)
+#define AST2700_SCUIO_HPLL_PARAM        TO_REG(0x300)
+#define AST2700_SCUIO_HPLL_EXT_PARAM    TO_REG(0x304)
+#define AST2700_SCUIO_APLL_PARAM        TO_REG(0x310)
+#define AST2700_SCUIO_APLL_EXT_PARAM    TO_REG(0x314)
+#define AST2700_SCUIO_DPLL_PARAM        TO_REG(0x320)
+#define AST2700_SCUIO_DPLL_EXT_PARAM    TO_REG(0x324)
+#define AST2700_SCUIO_DPLL_PARAM_READ   TO_REG(0x328)
+#define AST2700_SCUIO_DPLL_EXT_PARAM_READ TO_REG(0x32c)
+#define AST2700_SCUIO_UARTCLK_GEN       TO_REG(0x330)
+#define AST2700_SCUIO_HUARTCLK_GEN      TO_REG(0x334)
+#define AST2700_SCUIO_CLK_DUTY_MEAS_RST TO_REG(0x388)
+
 #define SCU_IO_REGION_SIZE 0x1000
 
 static const uint32_t ast2400_a0_resets[ASPEED_SCU_NR_REGS] = {
@@ -214,10 +256,52 @@ static uint32_t aspeed_scu_get_random(void)
 
 uint32_t aspeed_scu_get_apb_freq(AspeedSCUState *s)
 {
+    return ASPEED_SCU_GET_CLASS(s)->get_apb(s);
+}
+
+static uint32_t aspeed_2400_scu_get_apb_freq(AspeedSCUState *s)
+{
     AspeedSCUClass *asc = ASPEED_SCU_GET_CLASS(s);
     uint32_t hpll = asc->calc_hpll(s, s->regs[HPLL_PARAM]);
 
     return hpll / (SCU_CLK_GET_PCLK_DIV(s->regs[CLK_SEL]) + 1)
+        / asc->apb_divider;
+}
+
+static uint32_t aspeed_2600_scu_get_apb_freq(AspeedSCUState *s)
+{
+    AspeedSCUClass *asc = ASPEED_SCU_GET_CLASS(s);
+    uint32_t hpll = asc->calc_hpll(s, s->regs[AST2600_HPLL_PARAM]);
+
+    return hpll / (SCU_CLK_GET_PCLK_DIV(s->regs[AST2600_CLK_SEL]) + 1)
+        / asc->apb_divider;
+}
+
+static uint32_t aspeed_1030_scu_get_apb_freq(AspeedSCUState *s)
+{
+    AspeedSCUClass *asc = ASPEED_SCU_GET_CLASS(s);
+    uint32_t hpll = asc->calc_hpll(s, s->regs[AST2600_HPLL_PARAM]);
+
+    return hpll / (SCU_AST1030_CLK_GET_PCLK_DIV(s->regs[AST2600_CLK_SEL4]) + 1)
+        / asc->apb_divider;
+}
+
+static uint32_t aspeed_2700_scu_get_apb_freq(AspeedSCUState *s)
+{
+    AspeedSCUClass *asc = ASPEED_SCU_GET_CLASS(s);
+    uint32_t hpll = asc->calc_hpll(s, s->regs[AST2700_SCU_HPLL_PARAM]);
+
+    return hpll / (SCU_CLK_GET_PCLK_DIV(s->regs[AST2700_SCU_CLK_SEL_1]) + 1)
+           / asc->apb_divider;
+}
+
+static uint32_t aspeed_2700_scuio_get_apb_freq(AspeedSCUState *s)
+{
+    AspeedSCUClass *asc = ASPEED_SCU_GET_CLASS(s);
+    uint32_t hpll = asc->calc_hpll(s, s->regs[AST2700_SCUIO_HPLL_PARAM]);
+
+    return hpll /
+        (SCUIO_AST2700_CLK_GET_PCLK_DIV(s->regs[AST2700_SCUIO_CLK_SEL_1]) + 1)
         / asc->apb_divider;
 }
 
@@ -235,7 +319,8 @@ static uint64_t aspeed_scu_read(void *opaque, hwaddr offset, unsigned size)
 
     switch (reg) {
     case RNG_DATA:
-        /* On hardware, RNG_DATA works regardless of
+        /*
+         * On hardware, RNG_DATA works regardless of
          * the state of the enable bit in RNG_CTRL
          */
         s->regs[RNG_DATA] = aspeed_scu_get_random();
@@ -247,6 +332,7 @@ static uint64_t aspeed_scu_read(void *opaque, hwaddr offset, unsigned size)
         break;
     }
 
+    trace_aspeed_scu_read(offset, size, s->regs[reg]);
     return s->regs[reg];
 }
 
@@ -357,7 +443,8 @@ static const MemoryRegionOps aspeed_ast2500_scu_ops = {
 
 static uint32_t aspeed_scu_get_clkin(AspeedSCUState *s)
 {
-    if (s->hw_strap1 & SCU_HW_STRAP_CLK_25M_IN) {
+    if (s->hw_strap1 & SCU_HW_STRAP_CLK_25M_IN ||
+        ASPEED_SCU_GET_CLASS(s)->clkin_25Mhz) {
         return 25000000;
     } else if (s->hw_strap1 & SCU_HW_STRAP_CLK_48M_IN) {
         return 48000000;
@@ -426,6 +513,26 @@ static uint32_t aspeed_2500_scu_calc_hpll(AspeedSCUState *s, uint32_t hpll_reg)
     return clkin * multiplier;
 }
 
+static uint32_t aspeed_2600_scu_calc_hpll(AspeedSCUState *s, uint32_t hpll_reg)
+{
+    uint32_t multiplier = 1;
+    uint32_t clkin = aspeed_scu_get_clkin(s);
+
+    if (hpll_reg & SCU_AST2600_H_PLL_OFF) {
+        return 0;
+    }
+
+    if (!(hpll_reg & SCU_AST2600_H_PLL_BYPASS_EN)) {
+        uint32_t p = (hpll_reg >> 19) & 0xf;
+        uint32_t n = (hpll_reg >> 13) & 0x3f;
+        uint32_t m = hpll_reg & 0x1fff;
+
+        multiplier = ((m + 1) / (n + 1)) / (p + 1);
+    }
+
+    return clkin * multiplier;
+}
+
 static void aspeed_scu_reset(DeviceState *dev)
 {
     AspeedSCUState *s = ASPEED_SCU(dev);
@@ -447,6 +554,11 @@ static uint32_t aspeed_silicon_revs[] = {
     AST2600_A1_SILICON_REV,
     AST2600_A2_SILICON_REV,
     AST2600_A3_SILICON_REV,
+    AST1030_A0_SILICON_REV,
+    AST1030_A1_SILICON_REV,
+    AST2700_A0_SILICON_REV,
+    AST2720_A0_SILICON_REV,
+    AST2750_A0_SILICON_REV,
 };
 
 bool is_supported_silicon_rev(uint32_t silicon_rev)
@@ -484,7 +596,7 @@ static const VMStateDescription vmstate_aspeed_scu = {
     .name = "aspeed.scu",
     .version_id = 2,
     .minimum_version_id = 2,
-    .fields = (VMStateField[]) {
+    .fields = (const VMStateField[]) {
         VMSTATE_UINT32_ARRAY(regs, AspeedSCUState, ASPEED_AST2600_SCU_NR_REGS),
         VMSTATE_END_OF_LIST()
     }
@@ -525,8 +637,10 @@ static void aspeed_2400_scu_class_init(ObjectClass *klass, void *data)
     dc->desc = "ASPEED 2400 System Control Unit";
     asc->resets = ast2400_a0_resets;
     asc->calc_hpll = aspeed_2400_scu_calc_hpll;
+    asc->get_apb = aspeed_2400_scu_get_apb_freq;
     asc->apb_divider = 2;
     asc->nr_regs = ASPEED_SCU_NR_REGS;
+    asc->clkin_25Mhz = false;
     asc->ops = &aspeed_ast2400_scu_ops;
 }
 
@@ -545,8 +659,10 @@ static void aspeed_2500_scu_class_init(ObjectClass *klass, void *data)
     dc->desc = "ASPEED 2500 System Control Unit";
     asc->resets = ast2500_a1_resets;
     asc->calc_hpll = aspeed_2500_scu_calc_hpll;
+    asc->get_apb = aspeed_2400_scu_get_apb_freq;
     asc->apb_divider = 4;
     asc->nr_regs = ASPEED_SCU_NR_REGS;
+    asc->clkin_25Mhz = false;
     asc->ops = &aspeed_ast2500_scu_ops;
 }
 
@@ -587,6 +703,7 @@ static uint64_t aspeed_ast2600_scu_read(void *opaque, hwaddr offset,
         break;
     }
 
+    trace_aspeed_scu_read(offset, size, s->regs[reg]);
     return s->regs[reg];
 }
 
@@ -716,9 +833,11 @@ static void aspeed_2600_scu_class_init(ObjectClass *klass, void *data)
     dc->desc = "ASPEED 2600 System Control Unit";
     dc->reset = aspeed_ast2600_scu_reset;
     asc->resets = ast2600_a3_resets;
-    asc->calc_hpll = aspeed_2500_scu_calc_hpll; /* No change since AST2500 */
+    asc->calc_hpll = aspeed_2600_scu_calc_hpll;
+    asc->get_apb = aspeed_2600_scu_get_apb_freq;
     asc->apb_divider = 4;
     asc->nr_regs = ASPEED_AST2600_SCU_NR_REGS;
+    asc->clkin_25Mhz = true;
     asc->ops = &aspeed_ast2600_scu_ops;
 }
 
@@ -729,12 +848,303 @@ static const TypeInfo aspeed_2600_scu_info = {
     .class_init = aspeed_2600_scu_class_init,
 };
 
+static uint64_t aspeed_ast2700_scu_read(void *opaque, hwaddr offset,
+                                        unsigned size)
+{
+    AspeedSCUState *s = ASPEED_SCU(opaque);
+    int reg = TO_REG(offset);
+
+    if (reg >= ASPEED_AST2700_SCU_NR_REGS) {
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "%s: Out-of-bounds read at offset 0x%" HWADDR_PRIx "\n",
+                __func__, offset);
+        return 0;
+    }
+
+    switch (reg) {
+    default:
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "%s: Unhandled read at offset 0x%" HWADDR_PRIx "\n",
+                      __func__, offset);
+    }
+
+    trace_aspeed_ast2700_scu_read(offset, size, s->regs[reg]);
+    return s->regs[reg];
+}
+
+static void aspeed_ast2700_scu_write(void *opaque, hwaddr offset,
+                                     uint64_t data64, unsigned size)
+{
+    AspeedSCUState *s = ASPEED_SCU(opaque);
+    int reg = TO_REG(offset);
+    /* Truncate here so bitwise operations below behave as expected */
+    uint32_t data = data64;
+
+    if (reg >= ASPEED_AST2700_SCU_NR_REGS) {
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "%s: Out-of-bounds write at offset 0x%" HWADDR_PRIx "\n",
+                __func__, offset);
+        return;
+    }
+
+    trace_aspeed_ast2700_scu_write(offset, size, data);
+
+    switch (reg) {
+    default:
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "%s: Unhandled write at offset 0x%" HWADDR_PRIx "\n",
+                      __func__, offset);
+        break;
+    }
+
+    s->regs[reg] = data;
+}
+
+static const MemoryRegionOps aspeed_ast2700_scu_ops = {
+    .read = aspeed_ast2700_scu_read,
+    .write = aspeed_ast2700_scu_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .valid.min_access_size = 1,
+    .valid.max_access_size = 8,
+    .valid.unaligned = false,
+};
+
+static const uint32_t ast2700_a0_resets[ASPEED_AST2700_SCU_NR_REGS] = {
+    [AST2700_SILICON_REV]           = AST2700_A0_SILICON_REV,
+    [AST2700_HW_STRAP1]             = 0x00000800,
+    [AST2700_HW_STRAP1_CLR]         = 0xFFF0FFF0,
+    [AST2700_HW_STRAP1_LOCK]        = 0x00000FFF,
+    [AST2700_HW_STRAP1_SEC1]        = 0x000000FF,
+    [AST2700_HW_STRAP1_SEC2]        = 0x00000000,
+    [AST2700_HW_STRAP1_SEC3]        = 0x1000408F,
+    [AST2700_SCU_HPLL_PARAM]        = 0x0000009f,
+    [AST2700_SCU_HPLL_EXT_PARAM]    = 0x8000004f,
+    [AST2700_SCU_DPLL_PARAM]        = 0x0080009f,
+    [AST2700_SCU_DPLL_EXT_PARAM]    = 0x8000004f,
+    [AST2700_SCU_MPLL_PARAM]        = 0x00000040,
+    [AST2700_SCU_MPLL_EXT_PARAM]    = 0x80000000,
+    [AST2700_SCU_D1CLK_PARAM]       = 0x00050002,
+    [AST2700_SCU_D2CLK_PARAM]       = 0x00050002,
+    [AST2700_SCU_CRT1CLK_PARAM]     = 0x00050002,
+    [AST2700_SCU_CRT2CLK_PARAM]     = 0x00050002,
+    [AST2700_SCU_MPHYCLK_PARAM]     = 0x0000004c,
+    [AST2700_SCU_FREQ_CNTR]         = 0x000375eb,
+    [AST2700_SCU_CPU_SCRATCH_0]     = 0x00000000,
+    [AST2700_SCU_CPU_SCRATCH_1]     = 0x00000004,
+};
+
+static void aspeed_ast2700_scu_reset(DeviceState *dev)
+{
+    AspeedSCUState *s = ASPEED_SCU(dev);
+    AspeedSCUClass *asc = ASPEED_SCU_GET_CLASS(dev);
+
+    memcpy(s->regs, asc->resets, asc->nr_regs * 4);
+}
+
+static void aspeed_2700_scu_class_init(ObjectClass *klass, void *data)
+{
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    AspeedSCUClass *asc = ASPEED_SCU_CLASS(klass);
+
+    dc->desc = "ASPEED 2700 System Control Unit";
+    dc->reset = aspeed_ast2700_scu_reset;
+    asc->resets = ast2700_a0_resets;
+    asc->calc_hpll = aspeed_2600_scu_calc_hpll;
+    asc->get_apb = aspeed_2700_scu_get_apb_freq;
+    asc->apb_divider = 4;
+    asc->nr_regs = ASPEED_AST2700_SCU_NR_REGS;
+    asc->clkin_25Mhz = true;
+    asc->ops = &aspeed_ast2700_scu_ops;
+}
+
+static uint64_t aspeed_ast2700_scuio_read(void *opaque, hwaddr offset,
+                                        unsigned size)
+{
+    AspeedSCUState *s = ASPEED_SCU(opaque);
+    int reg = TO_REG(offset);
+    if (reg >= ASPEED_AST2700_SCU_NR_REGS) {
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "%s: Out-of-bounds read at offset 0x%" HWADDR_PRIx "\n",
+                __func__, offset);
+        return 0;
+    }
+
+    switch (reg) {
+    default:
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "%s: Unhandled read at offset 0x%" HWADDR_PRIx "\n",
+                      __func__, offset);
+    }
+
+    trace_aspeed_ast2700_scuio_read(offset, size, s->regs[reg]);
+    return s->regs[reg];
+}
+
+static void aspeed_ast2700_scuio_write(void *opaque, hwaddr offset,
+                                     uint64_t data64, unsigned size)
+{
+    AspeedSCUState *s = ASPEED_SCU(opaque);
+    int reg = TO_REG(offset);
+    /* Truncate here so bitwise operations below behave as expected */
+    uint32_t data = data64;
+    bool updated = false;
+
+    if (reg >= ASPEED_AST2700_SCU_NR_REGS) {
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "%s: Out-of-bounds write at offset 0x%" HWADDR_PRIx "\n",
+                __func__, offset);
+        return;
+    }
+
+    trace_aspeed_ast2700_scuio_write(offset, size, data);
+
+    switch (reg) {
+    case AST2700_SCUIO_CLK_STOP_CTL_1:
+    case AST2700_SCUIO_CLK_STOP_CTL_2:
+        s->regs[reg] |= data;
+        updated = true;
+        break;
+    case AST2700_SCUIO_CLK_STOP_CLR_1:
+    case AST2700_SCUIO_CLK_STOP_CLR_2:
+        s->regs[reg - 1] ^= data;
+        updated = true;
+        break;
+    default:
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "%s: Unhandled write at offset 0x%" HWADDR_PRIx "\n",
+                      __func__, offset);
+        break;
+    }
+
+    if (!updated) {
+        s->regs[reg] = data;
+    }
+}
+
+static const MemoryRegionOps aspeed_ast2700_scuio_ops = {
+    .read = aspeed_ast2700_scuio_read,
+    .write = aspeed_ast2700_scuio_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .valid.min_access_size = 1,
+    .valid.max_access_size = 8,
+    .valid.unaligned = false,
+};
+
+static const uint32_t ast2700_a0_resets_io[ASPEED_AST2700_SCU_NR_REGS] = {
+    [AST2700_SILICON_REV]               = 0x06000003,
+    [AST2700_HW_STRAP1]                 = 0x00000504,
+    [AST2700_HW_STRAP1_CLR]             = 0xFFF0FFF0,
+    [AST2700_HW_STRAP1_LOCK]            = 0x00000FFF,
+    [AST2700_HW_STRAP1_SEC1]            = 0x000000FF,
+    [AST2700_HW_STRAP1_SEC2]            = 0x00000000,
+    [AST2700_HW_STRAP1_SEC3]            = 0x1000408F,
+    [AST2700_SCUIO_CLK_STOP_CTL_1]      = 0xffff8400,
+    [AST2700_SCUIO_CLK_STOP_CTL_2]      = 0x00005f30,
+    [AST2700_SCUIO_CLK_SEL_1]           = 0x86900000,
+    [AST2700_SCUIO_CLK_SEL_2]           = 0x00400000,
+    [AST2700_SCUIO_HPLL_PARAM]          = 0x10000027,
+    [AST2700_SCUIO_HPLL_EXT_PARAM]      = 0x80000014,
+    [AST2700_SCUIO_APLL_PARAM]          = 0x1000001f,
+    [AST2700_SCUIO_APLL_EXT_PARAM]      = 0x8000000f,
+    [AST2700_SCUIO_DPLL_PARAM]          = 0x106e42ce,
+    [AST2700_SCUIO_DPLL_EXT_PARAM]      = 0x80000167,
+    [AST2700_SCUIO_DPLL_PARAM_READ]     = 0x106e42ce,
+    [AST2700_SCUIO_DPLL_EXT_PARAM_READ] = 0x80000167,
+    [AST2700_SCUIO_UARTCLK_GEN]         = 0x00014506,
+    [AST2700_SCUIO_HUARTCLK_GEN]        = 0x000145c0,
+    [AST2700_SCUIO_CLK_DUTY_MEAS_RST]   = 0x0c9100d2,
+};
+
+static void aspeed_2700_scuio_class_init(ObjectClass *klass, void *data)
+{
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    AspeedSCUClass *asc = ASPEED_SCU_CLASS(klass);
+
+    dc->desc = "ASPEED 2700 System Control Unit I/O";
+    dc->reset = aspeed_ast2700_scu_reset;
+    asc->resets = ast2700_a0_resets_io;
+    asc->calc_hpll = aspeed_2600_scu_calc_hpll;
+    asc->get_apb = aspeed_2700_scuio_get_apb_freq;
+    asc->apb_divider = 2;
+    asc->nr_regs = ASPEED_AST2700_SCU_NR_REGS;
+    asc->clkin_25Mhz = true;
+    asc->ops = &aspeed_ast2700_scuio_ops;
+}
+
+static const TypeInfo aspeed_2700_scu_info = {
+    .name = TYPE_ASPEED_2700_SCU,
+    .parent = TYPE_ASPEED_SCU,
+    .instance_size = sizeof(AspeedSCUState),
+    .class_init = aspeed_2700_scu_class_init,
+};
+
+static const TypeInfo aspeed_2700_scuio_info = {
+    .name = TYPE_ASPEED_2700_SCUIO,
+    .parent = TYPE_ASPEED_SCU,
+    .instance_size = sizeof(AspeedSCUState),
+    .class_init = aspeed_2700_scuio_class_init,
+};
+
+static const uint32_t ast1030_a1_resets[ASPEED_AST2600_SCU_NR_REGS] = {
+    [AST2600_SYS_RST_CTRL]      = 0xFFC3FED8,
+    [AST2600_SYS_RST_CTRL2]     = 0x09FFFFFC,
+    [AST2600_CLK_STOP_CTRL]     = 0xFFFF7F8A,
+    [AST2600_CLK_STOP_CTRL2]    = 0xFFF0FFF0,
+    [AST2600_DEBUG_CTRL2]       = 0x00000000,
+    [AST2600_HPLL_PARAM]        = 0x10004077,
+    [AST2600_HPLL_EXT]          = 0x00000031,
+    [AST2600_CLK_SEL4]          = 0x43F90900,
+    [AST2600_CLK_SEL5]          = 0x40000000,
+    [AST2600_CHIP_ID0]          = 0xDEADBEEF,
+    [AST2600_CHIP_ID1]          = 0x0BADCAFE,
+};
+
+static void aspeed_ast1030_scu_reset(DeviceState *dev)
+{
+    AspeedSCUState *s = ASPEED_SCU(dev);
+    AspeedSCUClass *asc = ASPEED_SCU_GET_CLASS(dev);
+
+    memcpy(s->regs, asc->resets, asc->nr_regs * 4);
+
+    s->regs[AST2600_SILICON_REV] = AST1030_A1_SILICON_REV;
+    s->regs[AST2600_SILICON_REV2] = s->silicon_rev;
+    s->regs[AST2600_HW_STRAP1] = s->hw_strap1;
+    s->regs[AST2600_HW_STRAP2] = s->hw_strap2;
+    s->regs[PROT_KEY] = s->hw_prot_key;
+}
+
+static void aspeed_1030_scu_class_init(ObjectClass *klass, void *data)
+{
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    AspeedSCUClass *asc = ASPEED_SCU_CLASS(klass);
+
+    dc->desc = "ASPEED 1030 System Control Unit";
+    dc->reset = aspeed_ast1030_scu_reset;
+    asc->resets = ast1030_a1_resets;
+    asc->calc_hpll = aspeed_2600_scu_calc_hpll;
+    asc->get_apb = aspeed_1030_scu_get_apb_freq;
+    asc->apb_divider = 2;
+    asc->nr_regs = ASPEED_AST2600_SCU_NR_REGS;
+    asc->clkin_25Mhz = true;
+    asc->ops = &aspeed_ast2600_scu_ops;
+}
+
+static const TypeInfo aspeed_1030_scu_info = {
+    .name = TYPE_ASPEED_1030_SCU,
+    .parent = TYPE_ASPEED_SCU,
+    .instance_size = sizeof(AspeedSCUState),
+    .class_init = aspeed_1030_scu_class_init,
+};
+
 static void aspeed_scu_register_types(void)
 {
     type_register_static(&aspeed_scu_info);
     type_register_static(&aspeed_2400_scu_info);
     type_register_static(&aspeed_2500_scu_info);
     type_register_static(&aspeed_2600_scu_info);
+    type_register_static(&aspeed_1030_scu_info);
+    type_register_static(&aspeed_2700_scu_info);
+    type_register_static(&aspeed_2700_scuio_info);
 }
 
 type_init(aspeed_scu_register_types);

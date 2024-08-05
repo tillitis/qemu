@@ -37,7 +37,7 @@ typedef struct QVirtioBlkReq {
     uint8_t status;
 } QVirtioBlkReq;
 
-#ifdef HOST_WORDS_BIGENDIAN
+#if HOST_BIG_ENDIAN
 static const bool host_is_big_endian = true;
 #else
 static const bool host_is_big_endian; /* false */
@@ -676,6 +676,11 @@ static void pci_hotplug(void *obj, void *data, QGuestAllocator *t_alloc)
     QVirtioPCIDevice *dev;
     QTestState *qts = dev1->pdev->bus->qts;
 
+    if (dev1->pdev->bus->not_hotpluggable) {
+        g_test_skip("pci bus does not support hotplug");
+        return;
+    }
+
     /* plug secondary disk */
     qtest_qmp_device_add(qts, "vhost-user-blk-pci", "drv1",
                          "{'addr': %s, 'chardev': 'char2'}",
@@ -702,6 +707,11 @@ static void multiqueue(void *obj, void *data, QGuestAllocator *t_alloc)
     QTestState *qts = pdev1->pdev->bus->qts;
     uint64_t features;
     uint16_t num_queues;
+
+    if (pdev1->pdev->bus->not_hotpluggable) {
+        g_test_skip("bus pci.0 does not support hotplug");
+        return;
+    }
 
     /*
      * The primary device has 1 queue and VIRTIO_BLK_F_MQ is not enabled. The
@@ -831,7 +841,8 @@ static char *create_listen_socket(int *fd)
     char *path;
 
     /* No race because our pid makes the path unique */
-    path = g_strdup_printf("/tmp/qtest-%d-sock.XXXXXX", getpid());
+    path = g_strdup_printf("%s/qtest-%d-sock.XXXXXX",
+                           g_get_tmp_dir(), getpid());
     tmp_fd = mkstemp(path);
     g_assert_cmpint(tmp_fd, >=, 0);
     close(tmp_fd);
@@ -895,7 +906,7 @@ static void start_vhost_user_blk(GString *cmd_line, int vus_instances,
                            vhost_user_blk_bin);
 
     g_string_append_printf(cmd_line,
-            " -object memory-backend-memfd,id=mem,size=256M,share=on "
+            " -object memory-backend-shm,id=mem,size=256M "
             " -M memory-backend=mem -m 256M ");
 
     for (i = 0; i < vus_instances; i++) {
@@ -950,7 +961,7 @@ static void *vhost_user_blk_test_setup(GString *cmd_line, void *arg)
  * Setup for hotplug.
  *
  * Since vhost-user server only serves one vhost-user client one time,
- * another exprot
+ * another export
  *
  */
 static void *vhost_user_blk_hotplug_test_setup(GString *cmd_line, void *arg)
@@ -971,6 +982,12 @@ static void register_vhost_user_blk_test(void)
     QOSGraphTestOptions opts = {
         .before = vhost_user_blk_test_setup,
     };
+
+    if (!getenv("QTEST_QEMU_STORAGE_DAEMON_BINARY")) {
+        g_test_message("QTEST_QEMU_STORAGE_DAEMON_BINARY not defined, "
+                       "skipping vhost-user-blk-test");
+        return;
+    }
 
     /*
      * tests for vhost-user-blk and vhost-user-blk-pci

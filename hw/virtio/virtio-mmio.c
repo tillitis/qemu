@@ -72,12 +72,12 @@ static void virtio_mmio_soft_reset(VirtIOMMIOProxy *proxy)
 {
     int i;
 
-    if (proxy->legacy) {
-        return;
-    }
+    virtio_bus_reset(&proxy->bus);
 
-    for (i = 0; i < VIRTIO_QUEUE_MAX; i++) {
-        proxy->vqs[i].enabled = 0;
+    if (!proxy->legacy) {
+        for (i = 0; i < VIRTIO_QUEUE_MAX; i++) {
+            proxy->vqs[i].enabled = 0;
+        }
     }
 }
 
@@ -248,6 +248,7 @@ static void virtio_mmio_write(void *opaque, hwaddr offset, uint64_t value,
 {
     VirtIOMMIOProxy *proxy = (VirtIOMMIOProxy *)opaque;
     VirtIODevice *vdev = virtio_bus_get_device(&proxy->bus);
+    uint16_t vq_idx;
 
     trace_virtio_mmio_write_offset(offset, value);
 
@@ -354,6 +355,7 @@ static void virtio_mmio_write(void *opaque, hwaddr offset, uint64_t value,
         if (proxy->legacy) {
             virtio_queue_update_rings(vdev, vdev->queue_sel);
         } else {
+            virtio_init_region_cache(vdev, vdev->queue_sel);
             proxy->vqs[vdev->queue_sel].num = value;
         }
         break;
@@ -376,7 +378,7 @@ static void virtio_mmio_write(void *opaque, hwaddr offset, uint64_t value,
             return;
         }
         if (value == 0) {
-            virtio_reset(vdev);
+            virtio_mmio_soft_reset(proxy);
         } else {
             virtio_queue_set_addr(vdev, vdev->queue_sel,
                                   value << proxy->guest_page_shift);
@@ -406,8 +408,14 @@ static void virtio_mmio_write(void *opaque, hwaddr offset, uint64_t value,
         }
         break;
     case VIRTIO_MMIO_QUEUE_NOTIFY:
-        if (value < VIRTIO_QUEUE_MAX) {
-            virtio_queue_notify(vdev, value);
+        vq_idx = value;
+        if (vq_idx < VIRTIO_QUEUE_MAX && virtio_queue_get_num(vdev, vq_idx)) {
+            if (virtio_vdev_has_feature(vdev, VIRTIO_F_NOTIFICATION_DATA)) {
+                VirtQueue *vq = virtio_get_queue(vdev, vq_idx);
+
+                virtio_queue_set_shadow_avail_idx(vq, (value >> 16) & 0xFFFF);
+            }
+            virtio_queue_notify(vdev, vq_idx);
         }
         break;
     case VIRTIO_MMIO_INTERRUPT_ACK:
@@ -432,7 +440,6 @@ static void virtio_mmio_write(void *opaque, hwaddr offset, uint64_t value,
         }
 
         if (vdev->status == 0) {
-            virtio_reset(vdev);
             virtio_mmio_soft_reset(proxy);
         }
         break;
@@ -565,7 +572,7 @@ static const VMStateDescription vmstate_virtio_mmio_queue_state = {
     .name = "virtio_mmio/queue_state",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (VMStateField[]) {
+    .fields = (const VMStateField[]) {
         VMSTATE_UINT16(num, VirtIOMMIOQueue),
         VMSTATE_BOOL(enabled, VirtIOMMIOQueue),
         VMSTATE_UINT32_ARRAY(desc, VirtIOMMIOQueue, 2),
@@ -579,7 +586,7 @@ static const VMStateDescription vmstate_virtio_mmio_state_sub = {
     .name = "virtio_mmio/state",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (VMStateField[]) {
+    .fields = (const VMStateField[]) {
         VMSTATE_UINT32_ARRAY(guest_features, VirtIOMMIOProxy, 2),
         VMSTATE_STRUCT_ARRAY(vqs, VirtIOMMIOProxy, VIRTIO_QUEUE_MAX, 0,
                              vmstate_virtio_mmio_queue_state,
@@ -592,11 +599,10 @@ static const VMStateDescription vmstate_virtio_mmio = {
     .name = "virtio_mmio",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
-    .fields = (VMStateField[]) {
+    .fields = (const VMStateField[]) {
         VMSTATE_END_OF_LIST()
     },
-    .subsections = (const VMStateDescription * []) {
+    .subsections = (const VMStateDescription * const []) {
         &vmstate_virtio_mmio_state_sub,
         NULL
     }
@@ -628,8 +634,8 @@ static void virtio_mmio_reset(DeviceState *d)
     VirtIOMMIOProxy *proxy = VIRTIO_MMIO(d);
     int i;
 
-    virtio_mmio_stop_ioeventfd(proxy);
-    virtio_bus_reset(&proxy->bus);
+    virtio_mmio_soft_reset(proxy);
+
     proxy->host_features_sel = 0;
     proxy->guest_features_sel = 0;
     proxy->guest_page_shift = 0;
@@ -638,7 +644,6 @@ static void virtio_mmio_reset(DeviceState *d)
         proxy->guest_features[0] = proxy->guest_features[1] = 0;
 
         for (i = 0; i < VIRTIO_QUEUE_MAX; i++) {
-            proxy->vqs[i].enabled = 0;
             proxy->vqs[i].num = 0;
             proxy->vqs[i].desc[0] = proxy->vqs[i].desc[1] = 0;
             proxy->vqs[i].avail[0] = proxy->vqs[i].avail[1] = 0;
@@ -673,7 +678,30 @@ static int virtio_mmio_set_guest_notifier(DeviceState *d, int n, bool assign,
 
     return 0;
 }
+static int virtio_mmio_set_config_guest_notifier(DeviceState *d, bool assign,
+                                                 bool with_irqfd)
+{
+    VirtIOMMIOProxy *proxy = VIRTIO_MMIO(d);
+    VirtIODevice *vdev = virtio_bus_get_device(&proxy->bus);
+    VirtioDeviceClass *vdc = VIRTIO_DEVICE_GET_CLASS(vdev);
+    EventNotifier *notifier = virtio_config_get_guest_notifier(vdev);
+    int r = 0;
 
+    if (assign) {
+        r = event_notifier_init(notifier, 0);
+        if (r < 0) {
+            return r;
+        }
+        virtio_config_set_guest_notifier_fd_handler(vdev, assign, with_irqfd);
+    } else {
+        virtio_config_set_guest_notifier_fd_handler(vdev, assign, with_irqfd);
+        event_notifier_cleanup(notifier);
+    }
+    if (vdc->guest_notifier_mask && vdev->use_guest_notifier_mask) {
+        vdc->guest_notifier_mask(vdev, VIRTIO_CONFIG_IRQ_IDX, !assign);
+    }
+    return r;
+}
 static int virtio_mmio_set_guest_notifiers(DeviceState *d, int nvqs,
                                            bool assign)
 {
@@ -694,6 +722,10 @@ static int virtio_mmio_set_guest_notifiers(DeviceState *d, int nvqs,
         if (r < 0) {
             goto assign_error;
         }
+    }
+    r = virtio_mmio_set_config_guest_notifier(d, assign, with_irqfd);
+    if (r < 0) {
+        goto assign_error;
     }
 
     return 0;
@@ -735,10 +767,6 @@ static void virtio_mmio_realizefn(DeviceState *d, Error **errp)
 
     qbus_init(&proxy->bus, sizeof(proxy->bus), TYPE_VIRTIO_MMIO_BUS, d, NULL);
     sysbus_init_irq(sbd, &proxy->irq);
-
-    if (!kvm_eventfds_enabled()) {
-        proxy->flags &= ~VIRTIO_IOMMIO_FLAG_USE_IOEVENTFD;
-    }
 
     /* fd-based ioevents can't be synchronized in record/replay */
     if (replay_mode != REPLAY_MODE_NONE) {
@@ -805,10 +833,10 @@ static char *virtio_mmio_bus_get_dev_path(DeviceState *dev)
     assert(section.mr);
 
     if (proxy_path) {
-        path = g_strdup_printf("%s/virtio-mmio@" TARGET_FMT_plx, proxy_path,
+        path = g_strdup_printf("%s/virtio-mmio@" HWADDR_FMT_plx, proxy_path,
                                section.offset_within_address_space);
     } else {
-        path = g_strdup_printf("virtio-mmio@" TARGET_FMT_plx,
+        path = g_strdup_printf("virtio-mmio@" HWADDR_FMT_plx,
                                section.offset_within_address_space);
     }
     memory_region_unref(section.mr);

@@ -28,11 +28,7 @@
 #error "AVR 8-bit does not support user mode"
 #endif
 
-#define AVR_CPU_TYPE_SUFFIX "-" TYPE_AVR_CPU
-#define AVR_CPU_TYPE_NAME(name) (name AVR_CPU_TYPE_SUFFIX)
 #define CPU_RESOLVING_TYPE TYPE_AVR_CPU
-
-#define TCG_GUEST_DEFAULT_MO 0
 
 /*
  * AVR has two memory spaces, data & code.
@@ -108,9 +104,7 @@ typedef enum AVRFeature {
     AVR_FEATURE_RAMPZ,
 } AVRFeature;
 
-typedef struct CPUAVRState CPUAVRState;
-
-struct CPUAVRState {
+typedef struct CPUArchState {
     uint32_t pc_w; /* 0x003fffff up to 22 bits */
 
     uint32_t sregC; /* 0x00000001 1 bit */
@@ -137,7 +131,7 @@ struct CPUAVRState {
     bool fullacc; /* CPU/MEM if true MEM only otherwise */
 
     uint64_t features;
-};
+} CPUAVRState;
 
 /**
  *  AVRCPU:
@@ -145,14 +139,28 @@ struct CPUAVRState {
  *
  *  A AVR CPU.
  */
-typedef struct AVRCPU {
-    /*< private >*/
+struct ArchCPU {
     CPUState parent_obj;
-    /*< public >*/
 
-    CPUNegativeOffsetState neg;
     CPUAVRState env;
-} AVRCPU;
+
+    /* Initial value of stack pointer */
+    uint32_t init_sp;
+};
+
+/**
+ *  AVRCPUClass:
+ *  @parent_realize: The parent class' realize handler.
+ *  @parent_phases: The parent class' reset phase handlers.
+ *
+ *  A AVR CPU model.
+ */
+struct AVRCPUClass {
+    CPUClass parent_class;
+
+    DeviceRealize parent_realize;
+    ResettablePhases parent_phases;
+};
 
 extern const struct VMStateDescription vms_avr_cpu;
 
@@ -174,28 +182,17 @@ static inline void set_avr_feature(CPUAVRState *env, int feature)
     env->features |= (1U << feature);
 }
 
-#define cpu_list avr_cpu_list
-#define cpu_mmu_index avr_cpu_mmu_index
-
-static inline int avr_cpu_mmu_index(CPUAVRState *env, bool ifetch)
-{
-    return ifetch ? MMU_CODE_IDX : MMU_DATA_IDX;
-}
-
 void avr_cpu_tcg_init(void);
 
-void avr_cpu_list(void);
 int cpu_avr_exec(CPUState *cpu);
-int avr_cpu_memory_rw_debug(CPUState *cs, vaddr address, uint8_t *buf,
-                            int len, bool is_write);
 
 enum {
     TB_FLAGS_FULL_ACCESS = 1,
     TB_FLAGS_SKIP = 2,
 };
 
-static inline void cpu_get_tb_cpu_state(CPUAVRState *env, target_ulong *pc,
-                                        target_ulong *cs_base, uint32_t *pflags)
+static inline void cpu_get_tb_cpu_state(CPUAVRState *env, vaddr *pc,
+                                        uint64_t *cs_base, uint32_t *pflags)
 {
     uint32_t flags = 0;
 
@@ -219,8 +216,7 @@ static inline int cpu_interrupts_enabled(CPUAVRState *env)
 
 static inline uint8_t cpu_get_sreg(CPUAVRState *env)
 {
-    uint8_t sreg;
-    sreg = (env->sregC) << 0
+    return (env->sregC) << 0
          | (env->sregZ) << 1
          | (env->sregN) << 2
          | (env->sregV) << 3
@@ -228,7 +224,6 @@ static inline uint8_t cpu_get_sreg(CPUAVRState *env)
          | (env->sregH) << 5
          | (env->sregT) << 6
          | (env->sregI) << 7;
-    return sreg;
 }
 
 static inline void cpu_set_sreg(CPUAVRState *env, uint8_t sreg)
@@ -247,9 +242,6 @@ bool avr_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
                       MMUAccessType access_type, int mmu_idx,
                       bool probe, uintptr_t retaddr);
 
-typedef CPUAVRState CPUArchState;
-typedef AVRCPU ArchCPU;
-
 #include "exec/cpu-all.h"
 
-#endif /* !defined (QEMU_AVR_CPU_H) */
+#endif /* QEMU_AVR_CPU_H */

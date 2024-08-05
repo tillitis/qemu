@@ -15,6 +15,7 @@ are useful for making QEMU interoperate with other software.
    dbus-display
    live-block-operations
    pr-helper
+   qmp-spec
    qemu-ga
    qemu-ga-ref
    qemu-qmp-ref
@@ -22,3 +23,5 @@ are useful for making QEMU interoperate with other software.
    vhost-user
    vhost-user-gpu
    vhost-vdpa
+   virtio-balloon-stats
+   vnc-ledstate-pseudo-encoding

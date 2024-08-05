@@ -8,7 +8,11 @@
 #ifndef TARGET_MIPS_TRANSLATE_H
 #define TARGET_MIPS_TRANSLATE_H
 
+#include "cpu.h"
+#include "tcg/tcg-op.h"
 #include "exec/translator.h"
+#include "exec/helper-gen.h"
+#include "qemu/log.h"
 
 #define MIPS_DEBUG_DISAS 0
 
@@ -45,10 +49,13 @@ typedef struct DisasContext {
     bool mrp;
     bool nan2008;
     bool abs2008;
-    bool saar;
     bool mi;
     int gi;
 } DisasContext;
+
+#define DISAS_STOP       DISAS_TARGET_0
+#define DISAS_EXIT       DISAS_TARGET_1
+#define DISAS_SEMIHOST   DISAS_TARGET_2
 
 /* MIPS major opcodes */
 #define MASK_OP_MAJOR(op)   (op & (0x3F << 26))
@@ -115,20 +122,21 @@ enum {
 };
 
 #define gen_helper_0e1i(name, arg1, arg2) do { \
-    gen_helper_##name(cpu_env, arg1, tcg_constant_i32(arg2)); \
+    gen_helper_##name(tcg_env, arg1, tcg_constant_i32(arg2)); \
     } while (0)
 
 #define gen_helper_1e0i(name, ret, arg1) do { \
-    gen_helper_##name(ret, cpu_env, tcg_constant_i32(arg1)); \
+    gen_helper_##name(ret, tcg_env, tcg_constant_i32(arg1)); \
     } while (0)
 
 #define gen_helper_0e2i(name, arg1, arg2, arg3) do { \
-    gen_helper_##name(cpu_env, arg1, arg2, tcg_constant_i32(arg3));\
+    gen_helper_##name(tcg_env, arg1, arg2, tcg_constant_i32(arg3));\
     } while (0)
 
 void generate_exception(DisasContext *ctx, int excp);
 void generate_exception_err(DisasContext *ctx, int excp, int err);
 void generate_exception_end(DisasContext *ctx, int excp);
+void generate_exception_break(DisasContext *ctx, int code);
 void gen_reserved_instruction(DisasContext *ctx);
 
 void check_insn(DisasContext *ctx, uint64_t flags);
@@ -193,7 +201,8 @@ extern TCGv bcond;
     do {                                                                      \
         if (MIPS_DEBUG_DISAS) {                                               \
             qemu_log_mask(CPU_LOG_TB_IN_ASM,                                  \
-                          TARGET_FMT_lx ": %08x Invalid %s %03x %03x %03x\n", \
+                          "%016" VADDR_PRIx                                   \
+                          ": %08x Invalid %s %03x %03x %03x\n",               \
                           ctx->base.pc_next, ctx->opcode, op,                 \
                           ctx->opcode >> 26, ctx->opcode & 0x3F,              \
                           ((ctx->opcode >> 16) & 0x1F));                      \
@@ -212,7 +221,9 @@ bool decode_isa_rel6(DisasContext *ctx, uint32_t insn);
 bool decode_ase_msa(DisasContext *ctx, uint32_t insn);
 bool decode_ext_txx9(DisasContext *ctx, uint32_t insn);
 #if defined(TARGET_MIPS64)
+bool decode_ase_lcsr(DisasContext *ctx, uint32_t insn);
 bool decode_ext_tx79(DisasContext *ctx, uint32_t insn);
+bool decode_ext_octeon(DisasContext *ctx, uint32_t insn);
 #endif
 bool decode_ext_vr54xx(DisasContext *ctx, uint32_t insn);
 

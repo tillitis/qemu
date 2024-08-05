@@ -54,6 +54,8 @@ enum QemuOptType {
     QEMU_OPT_SIZE,        /* size, accepts (K)ilo, (M)ega, (G)iga, (T)era postfix */
 };
 
+typedef struct QemuOpt QemuOpt;
+
 typedef struct QemuOptDesc {
     const char *name;
     enum QemuOptType type;
@@ -143,12 +145,6 @@ void qemu_opts_print(QemuOpts *opts, const char *sep);
 void qemu_opts_print_help(QemuOptsList *list, bool print_caption);
 void qemu_opts_free(QemuOptsList *list);
 QemuOptsList *qemu_opts_append(QemuOptsList *dst, QemuOptsList *list);
-
-QDict *keyval_parse_into(QDict *qdict, const char *params, const char *implied_key,
-                         bool *p_help, Error **errp);
-QDict *keyval_parse(const char *params, const char *implied_key,
-                    bool *help, Error **errp);
-void keyval_merge(QDict *old, const QDict *new, Error **errp);
 
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(QemuOpts, qemu_opts_del)
 

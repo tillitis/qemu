@@ -25,7 +25,8 @@ struct ESPState {
     uint8_t rregs[ESP_REGS];
     uint8_t wregs[ESP_REGS];
     qemu_irq irq;
-    qemu_irq irq_data;
+    qemu_irq drq_irq;
+    bool drq_state;
     uint8_t chip_id;
     bool tchi_written;
     int32_t ti_size;
@@ -40,8 +41,7 @@ struct ESPState {
     uint8_t lun;
     uint32_t do_cmd;
 
-    bool data_in_ready;
-    uint8_t ti_cmd;
+    bool data_ready;
     int dma_enabled;
 
     uint32_t async_len;
@@ -51,7 +51,6 @@ struct ESPState {
     ESPDMAMemoryReadWriteFunc dma_memory_write;
     void *dma_opaque;
     void (*dma_cb)(ESPState *s);
-    void (*pdma_cb)(ESPState *s);
 
     uint8_t mig_version_id;
 
@@ -63,6 +62,8 @@ struct ESPState {
     uint8_t mig_ti_buf[ESP_FIFO_SZ];
     uint8_t mig_cmdbuf[ESP_CMDFIFO_SZ];
     uint32_t mig_cmdlen;
+
+    uint8_t mig_ti_cmd;
 };
 
 #define TYPE_SYSBUS_ESP "sysbus-esp"

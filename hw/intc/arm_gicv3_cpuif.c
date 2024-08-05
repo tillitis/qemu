@@ -20,6 +20,16 @@
 #include "gicv3_internal.h"
 #include "hw/irq.h"
 #include "cpu.h"
+#include "target/arm/cpregs.h"
+#include "target/arm/cpu-features.h"
+#include "sysemu/tcg.h"
+#include "sysemu/qtest.h"
+
+/*
+ * Special case return value from hppvi_index(); must be larger than
+ * the architecturally maximum possible list register index (which is 15)
+ */
+#define HPPVI_INDEX_VLPI 16
 
 static GICv3CPUState *icc_cs_from_env(CPUARMState *env)
 {
@@ -40,6 +50,14 @@ static bool gicv3_use_ns_bank(CPUARMState *env)
 static inline int icv_min_vbpr(GICv3CPUState *cs)
 {
     return 7 - cs->vprebits;
+}
+
+static inline int ich_num_aprs(GICv3CPUState *cs)
+{
+    /* Return the number of virtual APR registers (1, 2, or 4) */
+    int aprmax = 1 << (cs->vprebits - 5);
+    assert(aprmax <= ARRAY_SIZE(cs->ich_apr[0]));
+    return aprmax;
 }
 
 /* Simple accessor functions for LR fields */
@@ -129,7 +147,7 @@ static uint32_t icv_fullprio_mask(GICv3CPUState *cs)
      * with the group priority, whose mask depends on the value of VBPR
      * for the interrupt group.)
      */
-    return ~0U << (8 - cs->vpribits);
+    return (~0U << (8 - cs->vpribits)) & 0xff;
 }
 
 static int ich_highest_active_virt_prio(GICv3CPUState *cs)
@@ -138,9 +156,11 @@ static int ich_highest_active_virt_prio(GICv3CPUState *cs)
      * in the ICH Active Priority Registers.
      */
     int i;
-    int aprmax = 1 << (cs->vprebits - 5);
+    int aprmax = ich_num_aprs(cs);
 
-    assert(aprmax <= ARRAY_SIZE(cs->ich_apr[0]));
+    if (cs->ich_apr[GICV3_G1NS][0] & ICV_AP1R_EL1_NMI) {
+        return 0x0;
+    }
 
     for (i = 0; i < aprmax; i++) {
         uint32_t apr = cs->ich_apr[GICV3_G0][i] |
@@ -157,10 +177,18 @@ static int ich_highest_active_virt_prio(GICv3CPUState *cs)
 
 static int hppvi_index(GICv3CPUState *cs)
 {
-    /* Return the list register index of the highest priority pending
+    /*
+     * Return the list register index of the highest priority pending
      * virtual interrupt, as per the HighestPriorityVirtualInterrupt
      * pseudocode. If no pending virtual interrupts, return -1.
+     * If the highest priority pending virtual interrupt is a vLPI,
+     * return HPPVI_INDEX_VLPI.
+     * (The pseudocode handles checking whether the vLPI is higher
+     * priority than the highest priority list register at every
+     * callsite of HighestPriorityVirtualInterrupt; we check it here.)
      */
+    ARMCPU *cpu = ARM_CPU(cs->cpu);
+    CPUARMState *env = &cpu->env;
     int idx = -1;
     int i;
     /* Note that a list register entry with a priority of 0xff will
@@ -168,6 +196,7 @@ static int hppvi_index(GICv3CPUState *cs)
      * correct behaviour.
      */
     int prio = 0xff;
+    bool nmi = false;
 
     if (!(cs->ich_vmcr_el2 & (ICH_VMCR_EL2_VENG0 | ICH_VMCR_EL2_VENG1))) {
         /* Both groups disabled, definitely nothing to do */
@@ -176,6 +205,7 @@ static int hppvi_index(GICv3CPUState *cs)
 
     for (i = 0; i < cs->num_list_regs; i++) {
         uint64_t lr = cs->ich_lr_el2[i];
+        bool thisnmi;
         int thisprio;
 
         if (ich_lr_state(lr) != ICH_LR_EL2_STATE_PENDING) {
@@ -194,11 +224,30 @@ static int hppvi_index(GICv3CPUState *cs)
             }
         }
 
+        thisnmi = lr & ICH_LR_EL2_NMI;
         thisprio = ich_lr_prio(lr);
 
-        if (thisprio < prio) {
+        if ((thisprio < prio) || ((thisprio == prio) && (thisnmi & (!nmi)))) {
             prio = thisprio;
+            nmi = thisnmi;
             idx = i;
+        }
+    }
+
+    /*
+     * "no pending vLPI" is indicated with prio = 0xff, which always
+     * fails the priority check here. vLPIs are only considered
+     * when we are in Non-Secure state.
+     */
+    if (cs->hppvlpi.prio < prio && !arm_is_secure(env)) {
+        if (cs->hppvlpi.grp == GICV3_G0) {
+            if (cs->ich_vmcr_el2 & ICH_VMCR_EL2_VENG0) {
+                return HPPVI_INDEX_VLPI;
+            }
+        } else {
+            if (cs->ich_vmcr_el2 & ICH_VMCR_EL2_VENG1) {
+                return HPPVI_INDEX_VLPI;
+            }
         }
     }
 
@@ -249,6 +298,7 @@ static bool icv_hppi_can_preempt(GICv3CPUState *cs, uint64_t lr)
      * equivalent of these checks.
      */
     int grp;
+    bool is_nmi;
     uint32_t mask, prio, rprio, vpmr;
 
     if (!(cs->ich_hcr_el2 & ICH_HCR_EL2_EN)) {
@@ -261,10 +311,11 @@ static bool icv_hppi_can_preempt(GICv3CPUState *cs, uint64_t lr)
      */
 
     prio = ich_lr_prio(lr);
+    is_nmi = lr & ICH_LR_EL2_NMI;
     vpmr = extract64(cs->ich_vmcr_el2, ICH_VMCR_EL2_VPMR_SHIFT,
                      ICH_VMCR_EL2_VPMR_LENGTH);
 
-    if (prio >= vpmr) {
+    if (!is_nmi && prio >= vpmr) {
         /* Priority mask masks this interrupt */
         return false;
     }
@@ -283,6 +334,52 @@ static bool icv_hppi_can_preempt(GICv3CPUState *cs, uint64_t lr)
      * group priority is sufficient (the subpriorities are not considered).
      */
     if ((prio & mask) < (rprio & mask)) {
+        return true;
+    }
+
+    if ((prio & mask) == (rprio & mask) && is_nmi &&
+        !(cs->ich_apr[GICV3_G1NS][0] & ICV_AP1R_EL1_NMI)) {
+        return true;
+    }
+
+    return false;
+}
+
+static bool icv_hppvlpi_can_preempt(GICv3CPUState *cs)
+{
+    /*
+     * Return true if we can signal the highest priority pending vLPI.
+     * We can assume we're Non-secure because hppvi_index() already
+     * tested for that.
+     */
+    uint32_t mask, rprio, vpmr;
+
+    if (!(cs->ich_hcr_el2 & ICH_HCR_EL2_EN)) {
+        /* Virtual interface disabled */
+        return false;
+    }
+
+    vpmr = extract64(cs->ich_vmcr_el2, ICH_VMCR_EL2_VPMR_SHIFT,
+                     ICH_VMCR_EL2_VPMR_LENGTH);
+
+    if (cs->hppvlpi.prio >= vpmr) {
+        /* Priority mask masks this interrupt */
+        return false;
+    }
+
+    rprio = ich_highest_active_virt_prio(cs);
+    if (rprio == 0xff) {
+        /* No running interrupt so we can preempt */
+        return true;
+    }
+
+    mask = icv_gprio_mask(cs, cs->hppvlpi.grp);
+
+    /*
+     * We only preempt a running interrupt if the pending interrupt's
+     * group priority is sufficient (the subpriorities are not considered).
+     */
+    if ((cs->hppvlpi.prio & mask) < (rprio & mask)) {
         return true;
     }
 
@@ -370,9 +467,65 @@ static uint32_t maintenance_interrupt_state(GICv3CPUState *cs)
     return value;
 }
 
+void gicv3_cpuif_virt_irq_fiq_update(GICv3CPUState *cs)
+{
+    /*
+     * Tell the CPU about any pending virtual interrupts.
+     * This should only be called for changes that affect the
+     * vIRQ and vFIQ status and do not change the maintenance
+     * interrupt status. This means that unlike gicv3_cpuif_virt_update()
+     * this function won't recursively call back into the GIC code.
+     * The main use of this is when the redistributor has changed the
+     * highest priority pending virtual LPI.
+     */
+    int idx;
+    int irqlevel = 0;
+    int fiqlevel = 0;
+    int nmilevel = 0;
+
+    idx = hppvi_index(cs);
+    trace_gicv3_cpuif_virt_update(gicv3_redist_affid(cs), idx,
+                                  cs->hppvlpi.irq, cs->hppvlpi.grp,
+                                  cs->hppvlpi.prio);
+    if (idx == HPPVI_INDEX_VLPI) {
+        if (icv_hppvlpi_can_preempt(cs)) {
+            if (cs->hppvlpi.grp == GICV3_G0) {
+                fiqlevel = 1;
+            } else {
+                irqlevel = 1;
+            }
+        }
+    } else if (idx >= 0) {
+        uint64_t lr = cs->ich_lr_el2[idx];
+
+        if (icv_hppi_can_preempt(cs, lr)) {
+            /*
+             * Virtual interrupts are simple: G0 are always FIQ, and G1 are
+             * IRQ or NMI which depends on the ICH_LR<n>_EL2.NMI to have
+             * non-maskable property.
+             */
+            if (lr & ICH_LR_EL2_GROUP) {
+                if (lr & ICH_LR_EL2_NMI) {
+                    nmilevel = 1;
+                } else {
+                    irqlevel = 1;
+                }
+            } else {
+                fiqlevel = 1;
+            }
+        }
+    }
+
+    trace_gicv3_cpuif_virt_set_irqs(gicv3_redist_affid(cs), fiqlevel, irqlevel);
+    qemu_set_irq(cs->parent_vfiq, fiqlevel);
+    qemu_set_irq(cs->parent_virq, irqlevel);
+    qemu_set_irq(cs->parent_vnmi, nmilevel);
+}
+
 static void gicv3_cpuif_virt_update(GICv3CPUState *cs)
 {
-    /* Tell the CPU about any pending virtual interrupts or
+    /*
+     * Tell the CPU about any pending virtual interrupts or
      * maintenance interrupts, following a change to the state
      * of the CPU interface relevant to virtual interrupts.
      *
@@ -389,37 +542,17 @@ static void gicv3_cpuif_virt_update(GICv3CPUState *cs)
      * naturally as a result of there being no architectural
      * linkage between the physical and virtual GIC logic.
      */
-    int idx;
-    int irqlevel = 0;
-    int fiqlevel = 0;
-    int maintlevel = 0;
     ARMCPU *cpu = ARM_CPU(cs->cpu);
+    int maintlevel = 0;
 
-    idx = hppvi_index(cs);
-    trace_gicv3_cpuif_virt_update(gicv3_redist_affid(cs), idx);
-    if (idx >= 0) {
-        uint64_t lr = cs->ich_lr_el2[idx];
-
-        if (icv_hppi_can_preempt(cs, lr)) {
-            /* Virtual interrupts are simple: G0 are always FIQ, and G1 IRQ */
-            if (lr & ICH_LR_EL2_GROUP) {
-                irqlevel = 1;
-            } else {
-                fiqlevel = 1;
-            }
-        }
-    }
+    gicv3_cpuif_virt_irq_fiq_update(cs);
 
     if ((cs->ich_hcr_el2 & ICH_HCR_EL2_EN) &&
         maintenance_interrupt_state(cs) != 0) {
         maintlevel = 1;
     }
 
-    trace_gicv3_cpuif_virt_set_irqs(gicv3_redist_affid(cs), fiqlevel,
-                                    irqlevel, maintlevel);
-
-    qemu_set_irq(cs->parent_vfiq, fiqlevel);
-    qemu_set_irq(cs->parent_virq, irqlevel);
+    trace_gicv3_cpuif_virt_set_maint_irq(gicv3_redist_affid(cs), maintlevel);
     qemu_set_irq(cpu->gicv3_maintenance_interrupt, maintlevel);
 }
 
@@ -443,9 +576,13 @@ static void icv_ap_write(CPUARMState *env, const ARMCPRegInfo *ri,
 
     trace_gicv3_icv_ap_write(ri->crm & 1, regno, gicv3_redist_affid(cs), value);
 
-    cs->ich_apr[grp][regno] = value & 0xFFFFFFFFU;
+    if (cs->nmi_support) {
+        cs->ich_apr[grp][regno] = value & (0xFFFFFFFFU | ICV_AP1R_EL1_NMI);
+    } else {
+        cs->ich_apr[grp][regno] = value & 0xFFFFFFFFU;
+    }
 
-    gicv3_cpuif_virt_update(cs);
+    gicv3_cpuif_virt_irq_fiq_update(cs);
     return;
 }
 
@@ -490,7 +627,7 @@ static void icv_bpr_write(CPUARMState *env, const ARMCPRegInfo *ri,
 
     write_vbpr(cs, grp, value);
 
-    gicv3_cpuif_virt_update(cs);
+    gicv3_cpuif_virt_irq_fiq_update(cs);
 }
 
 static uint64_t icv_pmr_read(CPUARMState *env, const ARMCPRegInfo *ri)
@@ -517,7 +654,7 @@ static void icv_pmr_write(CPUARMState *env, const ARMCPRegInfo *ri,
     cs->ich_vmcr_el2 = deposit64(cs->ich_vmcr_el2, ICH_VMCR_EL2_VPMR_SHIFT,
                                  ICH_VMCR_EL2_VPMR_LENGTH, value);
 
-    gicv3_cpuif_virt_update(cs);
+    gicv3_cpuif_virt_irq_fiq_update(cs);
 }
 
 static uint64_t icv_igrpen_read(CPUARMState *env, const ARMCPRegInfo *ri)
@@ -558,7 +695,7 @@ static uint64_t icv_ctlr_read(CPUARMState *env, const ARMCPRegInfo *ri)
      * should match the ones reported in ich_vtr_read().
      */
     value = ICC_CTLR_EL1_A3V | (1 << ICC_CTLR_EL1_IDBITS_SHIFT) |
-        (7 << ICC_CTLR_EL1_PRIBITS_SHIFT);
+        ((cs->vpribits - 1) << ICC_CTLR_EL1_PRIBITS_SHIFT);
 
     if (cs->ich_vmcr_el2 & ICH_VMCR_EL2_VEOIM) {
         value |= ICC_CTLR_EL1_EOIMODE;
@@ -584,13 +721,17 @@ static void icv_ctlr_write(CPUARMState *env, const ARMCPRegInfo *ri,
     cs->ich_vmcr_el2 = deposit64(cs->ich_vmcr_el2, ICH_VMCR_EL2_VEOIM_SHIFT,
                                  1, value & ICC_CTLR_EL1_EOIMODE ? 1 : 0);
 
-    gicv3_cpuif_virt_update(cs);
+    gicv3_cpuif_virt_irq_fiq_update(cs);
 }
 
 static uint64_t icv_rpr_read(CPUARMState *env, const ARMCPRegInfo *ri)
 {
     GICv3CPUState *cs = icc_cs_from_env(env);
-    int prio = ich_highest_active_virt_prio(cs);
+    uint64_t prio = ich_highest_active_virt_prio(cs);
+
+    if (cs->ich_apr[GICV3_G1NS][0] & ICV_AP1R_EL1_NMI) {
+        prio |= ICV_RPR_EL1_NMI;
+    }
 
     trace_gicv3_icv_rpr_read(gicv3_redist_affid(cs), prio);
     return prio;
@@ -603,7 +744,11 @@ static uint64_t icv_hppir_read(CPUARMState *env, const ARMCPRegInfo *ri)
     int idx = hppvi_index(cs);
     uint64_t value = INTID_SPURIOUS;
 
-    if (idx >= 0) {
+    if (idx == HPPVI_INDEX_VLPI) {
+        if (cs->hppvlpi.grp == grp) {
+            value = cs->hppvlpi.irq;
+        }
+    } else if (idx >= 0) {
         uint64_t lr = cs->ich_lr_el2[idx];
         int thisgrp = (lr & ICH_LR_EL2_GROUP) ? GICV3_G1NS : GICV3_G0;
 
@@ -612,7 +757,8 @@ static uint64_t icv_hppir_read(CPUARMState *env, const ARMCPRegInfo *ri)
         }
     }
 
-    trace_gicv3_icv_hppir_read(grp, gicv3_redist_affid(cs), value);
+    trace_gicv3_icv_hppir_read(ri->crm == 8 ? 0 : 1,
+                               gicv3_redist_affid(cs), value);
     return value;
 }
 
@@ -624,13 +770,31 @@ static void icv_activate_irq(GICv3CPUState *cs, int idx, int grp)
      */
     uint32_t mask = icv_gprio_mask(cs, grp);
     int prio = ich_lr_prio(cs->ich_lr_el2[idx]) & mask;
+    bool nmi = cs->ich_lr_el2[idx] & ICH_LR_EL2_NMI;
     int aprbit = prio >> (8 - cs->vprebits);
     int regno = aprbit / 32;
     int regbit = aprbit % 32;
 
     cs->ich_lr_el2[idx] &= ~ICH_LR_EL2_STATE_PENDING_BIT;
     cs->ich_lr_el2[idx] |= ICH_LR_EL2_STATE_ACTIVE_BIT;
-    cs->ich_apr[grp][regno] |= (1 << regbit);
+
+    if (nmi) {
+        cs->ich_apr[grp][regno] |= ICV_AP1R_EL1_NMI;
+    } else {
+        cs->ich_apr[grp][regno] |= (1 << regbit);
+    }
+}
+
+static void icv_activate_vlpi(GICv3CPUState *cs)
+{
+    uint32_t mask = icv_gprio_mask(cs, cs->hppvlpi.grp);
+    int prio = cs->hppvlpi.prio & mask;
+    int aprbit = prio >> (8 - cs->vprebits);
+    int regno = aprbit / 32;
+    int regbit = aprbit % 32;
+
+    cs->ich_apr[cs->hppvlpi.grp][regno] |= (1 << regbit);
+    gicv3_redist_vlpi_pending(cs, cs->hppvlpi.irq, 0);
 }
 
 static uint64_t icv_iar_read(CPUARMState *env, const ARMCPRegInfo *ri)
@@ -639,15 +803,26 @@ static uint64_t icv_iar_read(CPUARMState *env, const ARMCPRegInfo *ri)
     int grp = ri->crm == 8 ? GICV3_G0 : GICV3_G1NS;
     int idx = hppvi_index(cs);
     uint64_t intid = INTID_SPURIOUS;
+    int el = arm_current_el(env);
 
-    if (idx >= 0) {
+    if (idx == HPPVI_INDEX_VLPI) {
+        if (cs->hppvlpi.grp == grp && icv_hppvlpi_can_preempt(cs)) {
+            intid = cs->hppvlpi.irq;
+            icv_activate_vlpi(cs);
+        }
+    } else if (idx >= 0) {
         uint64_t lr = cs->ich_lr_el2[idx];
         int thisgrp = (lr & ICH_LR_EL2_GROUP) ? GICV3_G1NS : GICV3_G0;
+        bool nmi = env->cp15.sctlr_el[el] & SCTLR_NMI && lr & ICH_LR_EL2_NMI;
 
         if (thisgrp == grp && icv_hppi_can_preempt(cs, lr)) {
             intid = ich_lr_vintid(lr);
             if (!gicv3_intid_is_special(intid)) {
-                icv_activate_irq(cs, idx, grp);
+                if (!nmi) {
+                    icv_activate_irq(cs, idx, grp);
+                } else {
+                    intid = INTID_NMI;
+                }
             } else {
                 /* Interrupt goes from Pending to Invalid */
                 cs->ich_lr_el2[idx] &= ~ICH_LR_EL2_STATE_PENDING_BIT;
@@ -666,6 +841,72 @@ static uint64_t icv_iar_read(CPUARMState *env, const ARMCPRegInfo *ri)
     return intid;
 }
 
+static uint64_t icv_nmiar1_read(CPUARMState *env, const ARMCPRegInfo *ri)
+{
+    GICv3CPUState *cs = icc_cs_from_env(env);
+    int idx = hppvi_index(cs);
+    uint64_t intid = INTID_SPURIOUS;
+
+    if (idx >= 0 && idx != HPPVI_INDEX_VLPI) {
+        uint64_t lr = cs->ich_lr_el2[idx];
+        int thisgrp = (lr & ICH_LR_EL2_GROUP) ? GICV3_G1NS : GICV3_G0;
+
+        if ((thisgrp == GICV3_G1NS) && icv_hppi_can_preempt(cs, lr)) {
+            intid = ich_lr_vintid(lr);
+            if (!gicv3_intid_is_special(intid)) {
+                if (lr & ICH_LR_EL2_NMI) {
+                    icv_activate_irq(cs, idx, GICV3_G1NS);
+                } else {
+                    intid = INTID_SPURIOUS;
+                }
+            } else {
+                /* Interrupt goes from Pending to Invalid */
+                cs->ich_lr_el2[idx] &= ~ICH_LR_EL2_STATE_PENDING_BIT;
+                /*
+                 * We will now return the (bogus) ID from the list register,
+                 * as per the pseudocode.
+                 */
+            }
+        }
+    }
+
+    trace_gicv3_icv_nmiar1_read(gicv3_redist_affid(cs), intid);
+
+    gicv3_cpuif_virt_update(cs);
+
+    return intid;
+}
+
+static uint32_t icc_fullprio_mask(GICv3CPUState *cs)
+{
+    /*
+     * Return a mask word which clears the unimplemented priority bits
+     * from a priority value for a physical interrupt. (Not to be confused
+     * with the group priority, whose mask depends on the value of BPR
+     * for the interrupt group.)
+     */
+    return (~0U << (8 - cs->pribits)) & 0xff;
+}
+
+static inline int icc_min_bpr(GICv3CPUState *cs)
+{
+    /* The minimum BPR for the physical interface. */
+    return 7 - cs->prebits;
+}
+
+static inline int icc_min_bpr_ns(GICv3CPUState *cs)
+{
+    return icc_min_bpr(cs) + 1;
+}
+
+static inline int icc_num_aprs(GICv3CPUState *cs)
+{
+    /* Return the number of APR registers (1, 2, or 4) */
+    int aprmax = 1 << MAX(cs->prebits - 5, 0);
+    assert(aprmax <= ARRAY_SIZE(cs->icc_apr[0]));
+    return aprmax;
+}
+
 static int icc_highest_active_prio(GICv3CPUState *cs)
 {
     /* Calculate the current running priority based on the set bits
@@ -673,14 +914,31 @@ static int icc_highest_active_prio(GICv3CPUState *cs)
      */
     int i;
 
-    for (i = 0; i < ARRAY_SIZE(cs->icc_apr[0]); i++) {
+    if (cs->nmi_support) {
+        /*
+         * If an NMI is active this takes precedence over anything else
+         * for priority purposes; the NMI bit is only in the AP1R0 bit.
+         * We return here the effective priority of the NMI, which is
+         * either 0x0 or 0x80. Callers will need to check NMI again for
+         * purposes of either setting the RPR register bits or for
+         * prioritization of NMI vs non-NMI.
+         */
+        if (cs->icc_apr[GICV3_G1][0] & ICC_AP1R_EL1_NMI) {
+            return 0;
+        }
+        if (cs->icc_apr[GICV3_G1NS][0] & ICC_AP1R_EL1_NMI) {
+            return (cs->gic->gicd_ctlr & GICD_CTLR_DS) ? 0 : 0x80;
+        }
+    }
+
+    for (i = 0; i < icc_num_aprs(cs); i++) {
         uint32_t apr = cs->icc_apr[GICV3_G0][i] |
             cs->icc_apr[GICV3_G1][i] | cs->icc_apr[GICV3_G1NS][i];
 
         if (!apr) {
             continue;
         }
-        return (i * 32 + ctz32(apr)) << (GIC_MIN_BPR + 1);
+        return (i * 32 + ctz32(apr)) << (icc_min_bpr(cs) + 1);
     }
     /* No current active interrupts: return idle priority */
     return 0xff;
@@ -739,12 +997,24 @@ static bool icc_hppi_can_preempt(GICv3CPUState *cs)
      */
     int rprio;
     uint32_t mask;
+    ARMCPU *cpu = ARM_CPU(cs->cpu);
+    CPUARMState *env = &cpu->env;
 
     if (icc_no_enabled_hppi(cs)) {
         return false;
     }
 
-    if (cs->hppi.prio >= cs->icc_pmr_el1) {
+    if (cs->hppi.nmi) {
+        if (!(cs->gic->gicd_ctlr & GICD_CTLR_DS) &&
+            cs->hppi.grp == GICV3_G1NS) {
+            if (cs->icc_pmr_el1 < 0x80) {
+                return false;
+            }
+            if (arm_is_secure(env) && cs->icc_pmr_el1 == 0x80) {
+                return false;
+            }
+        }
+    } else if (cs->hppi.prio >= cs->icc_pmr_el1) {
         /* Priority mask masks this interrupt */
         return false;
     }
@@ -764,6 +1034,12 @@ static bool icc_hppi_can_preempt(GICv3CPUState *cs)
         return true;
     }
 
+    if (cs->hppi.nmi && (cs->hppi.prio & mask) == (rprio & mask)) {
+        if (!(cs->icc_apr[cs->hppi.grp][0] & ICC_AP1R_EL1_NMI)) {
+            return true;
+        }
+    }
+
     return false;
 }
 
@@ -772,10 +1048,11 @@ void gicv3_cpuif_update(GICv3CPUState *cs)
     /* Tell the CPU about its highest priority pending interrupt */
     int irqlevel = 0;
     int fiqlevel = 0;
+    int nmilevel = 0;
     ARMCPU *cpu = ARM_CPU(cs->cpu);
     CPUARMState *env = &cpu->env;
 
-    g_assert(qemu_mutex_iothread_locked());
+    g_assert(bql_locked());
 
     trace_gicv3_cpuif_update(gicv3_redist_affid(cs), cs->hppi.irq,
                              cs->hppi.grp, cs->hppi.prio);
@@ -810,6 +1087,8 @@ void gicv3_cpuif_update(GICv3CPUState *cs)
 
         if (isfiq) {
             fiqlevel = 1;
+        } else if (cs->hppi.nmi) {
+            nmilevel = 1;
         } else {
             irqlevel = 1;
         }
@@ -819,6 +1098,7 @@ void gicv3_cpuif_update(GICv3CPUState *cs)
 
     qemu_set_irq(cs->parent_fiq, fiqlevel);
     qemu_set_irq(cs->parent_irq, irqlevel);
+    qemu_set_irq(cs->parent_nmi, nmilevel);
 }
 
 static uint64_t icc_pmr_read(CPUARMState *env, const ARMCPRegInfo *ri)
@@ -859,8 +1139,6 @@ static void icc_pmr_write(CPUARMState *env, const ARMCPRegInfo *ri,
 
     trace_gicv3_icc_pmr_write(gicv3_redist_affid(cs), value);
 
-    value &= 0xff;
-
     if (arm_feature(env, ARM_FEATURE_EL3) && !arm_is_secure(env) &&
         (env->cp15.scr_el3 & SCR_FIQ)) {
         /* NS access and Group 0 is inaccessible to NS: return the
@@ -872,6 +1150,7 @@ static void icc_pmr_write(CPUARMState *env, const ARMCPRegInfo *ri,
         }
         value = (value >> 1) | 0x80;
     }
+    value &= icc_fullprio_mask(cs);
     cs->icc_pmr_el1 = value;
     gicv3_cpuif_update(cs);
 }
@@ -883,11 +1162,16 @@ static void icc_activate_irq(GICv3CPUState *cs, int irq)
      */
     uint32_t mask = icc_gprio_mask(cs, cs->hppi.grp);
     int prio = cs->hppi.prio & mask;
-    int aprbit = prio >> 1;
+    int aprbit = prio >> (8 - cs->prebits);
     int regno = aprbit / 32;
     int regbit = aprbit % 32;
+    bool nmi = cs->hppi.nmi;
 
-    cs->icc_apr[cs->hppi.grp][regno] |= (1 << regbit);
+    if (nmi) {
+        cs->icc_apr[cs->hppi.grp][regno] |= ICC_AP1R_EL1_NMI;
+    } else {
+        cs->icc_apr[cs->hppi.grp][regno] |= (1 << regbit);
+    }
 
     if (irq < GIC_INTERNAL) {
         cs->gicr_iactiver0 = deposit32(cs->gicr_iactiver0, irq, 1, 1);
@@ -909,7 +1193,7 @@ static uint64_t icc_hppir0_value(GICv3CPUState *cs, CPUARMState *env)
      */
     bool irq_is_secure;
 
-    if (cs->hppi.prio == 0xff) {
+    if (icc_no_enabled_hppi(cs)) {
         return INTID_SPURIOUS;
     }
 
@@ -946,7 +1230,7 @@ static uint64_t icc_hppir1_value(GICv3CPUState *cs, CPUARMState *env)
      */
     bool irq_is_secure;
 
-    if (cs->hppi.prio == 0xff) {
+    if (icc_no_enabled_hppi(cs)) {
         return INTID_SPURIOUS;
     }
 
@@ -1001,6 +1285,7 @@ static uint64_t icc_iar0_read(CPUARMState *env, const ARMCPRegInfo *ri)
 static uint64_t icc_iar1_read(CPUARMState *env, const ARMCPRegInfo *ri)
 {
     GICv3CPUState *cs = icc_cs_from_env(env);
+    int el = arm_current_el(env);
     uint64_t intid;
 
     if (icv_access(env, HCR_IMO)) {
@@ -1014,10 +1299,41 @@ static uint64_t icc_iar1_read(CPUARMState *env, const ARMCPRegInfo *ri)
     }
 
     if (!gicv3_intid_is_special(intid)) {
-        icc_activate_irq(cs, intid);
+        if (cs->hppi.nmi && env->cp15.sctlr_el[el] & SCTLR_NMI) {
+            intid = INTID_NMI;
+        } else {
+            icc_activate_irq(cs, intid);
+        }
     }
 
     trace_gicv3_icc_iar1_read(gicv3_redist_affid(cs), intid);
+    return intid;
+}
+
+static uint64_t icc_nmiar1_read(CPUARMState *env, const ARMCPRegInfo *ri)
+{
+    GICv3CPUState *cs = icc_cs_from_env(env);
+    uint64_t intid;
+
+    if (icv_access(env, HCR_IMO)) {
+        return icv_nmiar1_read(env, ri);
+    }
+
+    if (!icc_hppi_can_preempt(cs)) {
+        intid = INTID_SPURIOUS;
+    } else {
+        intid = icc_hppir1_value(cs, env);
+    }
+
+    if (!gicv3_intid_is_special(intid)) {
+        if (!cs->hppi.nmi) {
+            intid = INTID_SPURIOUS;
+        } else {
+            icc_activate_irq(cs, intid);
+        }
+    }
+
+    trace_gicv3_icc_nmiar1_read(gicv3_redist_affid(cs), intid);
     return intid;
 }
 
@@ -1041,12 +1357,18 @@ static void icc_drop_prio(GICv3CPUState *cs, int grp)
      */
     int i;
 
-    for (i = 0; i < ARRAY_SIZE(cs->icc_apr[grp]); i++) {
+    for (i = 0; i < icc_num_aprs(cs); i++) {
         uint64_t *papr = &cs->icc_apr[grp][i];
 
         if (!*papr) {
             continue;
         }
+
+        if (i == 0 && cs->nmi_support && (*papr & ICC_AP1R_EL1_NMI)) {
+            *papr &= (~ICC_AP1R_EL1_NMI);
+            break;
+        }
+
         /* Clear the lowest set bit */
         *papr &= *papr - 1;
         break;
@@ -1080,6 +1402,15 @@ static int icc_highest_active_group(GICv3CPUState *cs)
      * we're in UNPREDICTABLE territory.)
      */
     int i;
+
+    if (cs->nmi_support) {
+        if (cs->icc_apr[GICV3_G1][0] & ICC_AP1R_EL1_NMI) {
+            return GICV3_G1;
+        }
+        if (cs->icc_apr[GICV3_G1NS][0] & ICC_AP1R_EL1_NMI) {
+            return GICV3_G1NS;
+        }
+    }
 
     for (i = 0; i < ARRAY_SIZE(cs->icc_apr[0]); i++) {
         int g0ctz = ctz32(cs->icc_apr[GICV3_G0][i]);
@@ -1171,7 +1502,7 @@ static void icv_increment_eoicount(GICv3CPUState *cs)
                                 ICH_HCR_EL2_EOICOUNT_LENGTH, eoicount + 1);
 }
 
-static int icv_drop_prio(GICv3CPUState *cs)
+static int icv_drop_prio(GICv3CPUState *cs, bool *nmi)
 {
     /* Drop the priority of the currently active virtual interrupt
      * (favouring group 0 if there is a set active bit at
@@ -1182,9 +1513,7 @@ static int icv_drop_prio(GICv3CPUState *cs)
      * 32 bits are actually relevant.
      */
     int i;
-    int aprmax = 1 << (cs->vprebits - 5);
-
-    assert(aprmax <= ARRAY_SIZE(cs->ich_apr[0]));
+    int aprmax = ich_num_aprs(cs);
 
     for (i = 0; i < aprmax; i++) {
         uint64_t *papr0 = &cs->ich_apr[GICV3_G0][i];
@@ -1193,6 +1522,12 @@ static int icv_drop_prio(GICv3CPUState *cs)
 
         if (!*papr0 && !*papr1) {
             continue;
+        }
+
+        if (i == 0 && cs->nmi_support && (*papr1 & ICV_AP1R_EL1_NMI)) {
+            *papr1 &= (~ICV_AP1R_EL1_NMI);
+            *nmi = true;
+            return 0xff;
         }
 
         /* We can't just use the bit-twiddling hack icc_drop_prio() does
@@ -1254,6 +1589,7 @@ static void icv_eoir_write(CPUARMState *env, const ARMCPRegInfo *ri,
     int irq = value & 0xffffff;
     int grp = ri->crm == 8 ? GICV3_G0 : GICV3_G1NS;
     int idx, dropprio;
+    bool nmi = false;
 
     trace_gicv3_icv_eoir_write(ri->crm == 8 ? 0 : 1,
                                gicv3_redist_affid(cs), value);
@@ -1266,8 +1602,8 @@ static void icv_eoir_write(CPUARMState *env, const ARMCPRegInfo *ri,
      * error checks" (because that lets us avoid scanning the AP
      * registers twice).
      */
-    dropprio = icv_drop_prio(cs);
-    if (dropprio == 0xff) {
+    dropprio = icv_drop_prio(cs, &nmi);
+    if (dropprio == 0xff && !nmi) {
         /* No active interrupt. It is CONSTRAINED UNPREDICTABLE
          * whether the list registers are checked in this
          * situation; we choose not to.
@@ -1278,16 +1614,26 @@ static void icv_eoir_write(CPUARMState *env, const ARMCPRegInfo *ri,
     idx = icv_find_active(cs, irq);
 
     if (idx < 0) {
-        /* No valid list register corresponding to EOI ID */
-        icv_increment_eoicount(cs);
+        /*
+         * No valid list register corresponding to EOI ID; if this is a vLPI
+         * not in the list regs then do nothing; otherwise increment EOI count
+         */
+        if (irq < GICV3_LPI_INTID_START) {
+            icv_increment_eoicount(cs);
+        }
     } else {
         uint64_t lr = cs->ich_lr_el2[idx];
         int thisgrp = (lr & ICH_LR_EL2_GROUP) ? GICV3_G1NS : GICV3_G0;
         int lr_gprio = ich_lr_prio(lr) & icv_gprio_mask(cs, grp);
+        bool thisnmi = lr & ICH_LR_EL2_NMI;
 
-        if (thisgrp == grp && lr_gprio == dropprio) {
-            if (!icv_eoi_split(env, cs)) {
-                /* Priority drop and deactivate not split: deactivate irq now */
+        if (thisgrp == grp && (lr_gprio == dropprio || (thisnmi & nmi))) {
+            if (!icv_eoi_split(env, cs) || irq >= GICV3_LPI_INTID_START) {
+                /*
+                 * Priority drop and deactivate not split: deactivate irq now.
+                 * LPIs always get their active state cleared immediately
+                 * because no separate deactivate is expected.
+                 */
                 icv_deactivate_irq(cs, idx);
             }
         }
@@ -1469,7 +1815,7 @@ static void icc_bpr_write(CPUARMState *env, const ARMCPRegInfo *ri,
         return;
     }
 
-    minval = (grp == GICV3_G1NS) ? GIC_MIN_BPR_NS : GIC_MIN_BPR;
+    minval = (grp == GICV3_G1NS) ? icc_min_bpr_ns(cs) : icc_min_bpr(cs);
     if (value < minval) {
         value = minval;
     }
@@ -1528,7 +1874,11 @@ static void icc_ap_write(CPUARMState *env, const ARMCPRegInfo *ri,
         return;
     }
 
-    cs->icc_apr[grp][regno] = value & 0xFFFFFFFFU;
+    if (cs->nmi_support) {
+        cs->icc_apr[grp][regno] = value & (0xFFFFFFFFU | ICC_AP1R_EL1_NMI);
+    } else {
+        cs->icc_apr[grp][regno] = value & 0xFFFFFFFFU;
+    }
     gicv3_cpuif_update(cs);
 }
 
@@ -1618,7 +1968,7 @@ static void icc_dir_write(CPUARMState *env, const ARMCPRegInfo *ri,
 static uint64_t icc_rpr_read(CPUARMState *env, const ARMCPRegInfo *ri)
 {
     GICv3CPUState *cs = icc_cs_from_env(env);
-    int prio;
+    uint64_t prio;
 
     if (icv_access(env, HCR_FMO | HCR_IMO)) {
         return icv_rpr_read(env, ri);
@@ -1635,6 +1985,22 @@ static uint64_t icc_rpr_read(CPUARMState *env, const ARMCPRegInfo *ri)
         } else if (prio != 0xff) {
             /* Non-idle priority: show the Non-secure view of it */
             prio = (prio << 1) & 0xff;
+        }
+    }
+
+    if (cs->nmi_support) {
+        /* NMI info is reported in the high bits of RPR */
+        if (arm_feature(env, ARM_FEATURE_EL3) && !arm_is_secure(env)) {
+            if (cs->icc_apr[GICV3_G1NS][0] & ICC_AP1R_EL1_NMI) {
+                prio |= ICC_RPR_EL1_NMI;
+            }
+        } else {
+            if (cs->icc_apr[GICV3_G1NS][0] & ICC_AP1R_EL1_NMI) {
+                prio |= ICC_RPR_EL1_NSNMI;
+            }
+            if (cs->icc_apr[GICV3_G1][0] & ICC_AP1R_EL1_NMI) {
+                prio |= ICC_RPR_EL1_NMI;
+            }
         }
     }
 
@@ -1892,7 +2258,7 @@ static void icc_ctlr_el3_write(CPUARMState *env, const ARMCPRegInfo *ri,
         cs->icc_ctlr_el1[GICV3_S] |= ICC_CTLR_EL1_CBPR;
     }
 
-    /* The only bit stored in icc_ctlr_el3 which is writeable is EOIMODE_EL3: */
+    /* The only bit stored in icc_ctlr_el3 which is writable is EOIMODE_EL3: */
     mask = ICC_CTLR_EL3_EOIMODE_EL3;
 
     cs->icc_ctlr_el3 &= ~mask;
@@ -2050,19 +2416,19 @@ static void icc_reset(CPUARMState *env, const ARMCPRegInfo *ri)
 
     cs->icc_ctlr_el1[GICV3_S] = ICC_CTLR_EL1_A3V |
         (1 << ICC_CTLR_EL1_IDBITS_SHIFT) |
-        (7 << ICC_CTLR_EL1_PRIBITS_SHIFT);
+        ((cs->pribits - 1) << ICC_CTLR_EL1_PRIBITS_SHIFT);
     cs->icc_ctlr_el1[GICV3_NS] = ICC_CTLR_EL1_A3V |
         (1 << ICC_CTLR_EL1_IDBITS_SHIFT) |
-        (7 << ICC_CTLR_EL1_PRIBITS_SHIFT);
+        ((cs->pribits - 1) << ICC_CTLR_EL1_PRIBITS_SHIFT);
     cs->icc_pmr_el1 = 0;
-    cs->icc_bpr[GICV3_G0] = GIC_MIN_BPR;
-    cs->icc_bpr[GICV3_G1] = GIC_MIN_BPR;
-    cs->icc_bpr[GICV3_G1NS] = GIC_MIN_BPR_NS;
+    cs->icc_bpr[GICV3_G0] = icc_min_bpr(cs);
+    cs->icc_bpr[GICV3_G1] = icc_min_bpr(cs);
+    cs->icc_bpr[GICV3_G1NS] = icc_min_bpr_ns(cs);
     memset(cs->icc_apr, 0, sizeof(cs->icc_apr));
     memset(cs->icc_igrpen, 0, sizeof(cs->icc_igrpen));
     cs->icc_ctlr_el3 = ICC_CTLR_EL3_NDS | ICC_CTLR_EL3_A3V |
         (1 << ICC_CTLR_EL3_IDBITS_SHIFT) |
-        (7 << ICC_CTLR_EL3_PRIBITS_SHIFT);
+        ((cs->pribits - 1) << ICC_CTLR_EL3_PRIBITS_SHIFT);
 
     memset(cs->ich_apr, 0, sizeof(cs->ich_apr));
     cs->ich_hcr_el2 = 0;
@@ -2117,51 +2483,9 @@ static const ARMCPRegInfo gicv3_cpuif_reginfo[] = {
       .readfn = icc_ap_read,
       .writefn = icc_ap_write,
     },
-    { .name = "ICC_AP0R1_EL1", .state = ARM_CP_STATE_BOTH,
-      .opc0 = 3, .opc1 = 0, .crn = 12, .crm = 8, .opc2 = 5,
-      .type = ARM_CP_IO | ARM_CP_NO_RAW,
-      .access = PL1_RW, .accessfn = gicv3_fiq_access,
-      .readfn = icc_ap_read,
-      .writefn = icc_ap_write,
-    },
-    { .name = "ICC_AP0R2_EL1", .state = ARM_CP_STATE_BOTH,
-      .opc0 = 3, .opc1 = 0, .crn = 12, .crm = 8, .opc2 = 6,
-      .type = ARM_CP_IO | ARM_CP_NO_RAW,
-      .access = PL1_RW, .accessfn = gicv3_fiq_access,
-      .readfn = icc_ap_read,
-      .writefn = icc_ap_write,
-    },
-    { .name = "ICC_AP0R3_EL1", .state = ARM_CP_STATE_BOTH,
-      .opc0 = 3, .opc1 = 0, .crn = 12, .crm = 8, .opc2 = 7,
-      .type = ARM_CP_IO | ARM_CP_NO_RAW,
-      .access = PL1_RW, .accessfn = gicv3_fiq_access,
-      .readfn = icc_ap_read,
-      .writefn = icc_ap_write,
-    },
     /* All the ICC_AP1R*_EL1 registers are banked */
     { .name = "ICC_AP1R0_EL1", .state = ARM_CP_STATE_BOTH,
       .opc0 = 3, .opc1 = 0, .crn = 12, .crm = 9, .opc2 = 0,
-      .type = ARM_CP_IO | ARM_CP_NO_RAW,
-      .access = PL1_RW, .accessfn = gicv3_irq_access,
-      .readfn = icc_ap_read,
-      .writefn = icc_ap_write,
-    },
-    { .name = "ICC_AP1R1_EL1", .state = ARM_CP_STATE_BOTH,
-      .opc0 = 3, .opc1 = 0, .crn = 12, .crm = 9, .opc2 = 1,
-      .type = ARM_CP_IO | ARM_CP_NO_RAW,
-      .access = PL1_RW, .accessfn = gicv3_irq_access,
-      .readfn = icc_ap_read,
-      .writefn = icc_ap_write,
-    },
-    { .name = "ICC_AP1R2_EL1", .state = ARM_CP_STATE_BOTH,
-      .opc0 = 3, .opc1 = 0, .crn = 12, .crm = 9, .opc2 = 2,
-      .type = ARM_CP_IO | ARM_CP_NO_RAW,
-      .access = PL1_RW, .accessfn = gicv3_irq_access,
-      .readfn = icc_ap_read,
-      .writefn = icc_ap_write,
-    },
-    { .name = "ICC_AP1R3_EL1", .state = ARM_CP_STATE_BOTH,
-      .opc0 = 3, .opc1 = 0, .crn = 12, .crm = 9, .opc2 = 3,
       .type = ARM_CP_IO | ARM_CP_NO_RAW,
       .access = PL1_RW, .accessfn = gicv3_irq_access,
       .readfn = icc_ap_read,
@@ -2264,6 +2588,7 @@ static const ARMCPRegInfo gicv3_cpuif_reginfo[] = {
       .opc0 = 3, .opc1 = 0, .crn = 12, .crm = 12, .opc2 = 6,
       .type = ARM_CP_IO | ARM_CP_NO_RAW,
       .access = PL1_RW, .accessfn = gicv3_fiq_access,
+      .fgt = FGT_ICC_IGRPENN_EL1,
       .readfn = icc_igrpen_read,
       .writefn = icc_igrpen_write,
     },
@@ -2272,6 +2597,7 @@ static const ARMCPRegInfo gicv3_cpuif_reginfo[] = {
       .opc0 = 3, .opc1 = 0, .crn = 12, .crm = 12, .opc2 = 7,
       .type = ARM_CP_IO | ARM_CP_NO_RAW,
       .access = PL1_RW, .accessfn = gicv3_irq_access,
+      .fgt = FGT_ICC_IGRPENN_EL1,
       .readfn = icc_igrpen_read,
       .writefn = icc_igrpen_write,
     },
@@ -2307,7 +2633,63 @@ static const ARMCPRegInfo gicv3_cpuif_reginfo[] = {
       .readfn = icc_igrpen1_el3_read,
       .writefn = icc_igrpen1_el3_write,
     },
-    REGINFO_SENTINEL
+};
+
+static const ARMCPRegInfo gicv3_cpuif_icc_apxr1_reginfo[] = {
+    { .name = "ICC_AP0R1_EL1", .state = ARM_CP_STATE_BOTH,
+      .opc0 = 3, .opc1 = 0, .crn = 12, .crm = 8, .opc2 = 5,
+      .type = ARM_CP_IO | ARM_CP_NO_RAW,
+      .access = PL1_RW, .accessfn = gicv3_fiq_access,
+      .readfn = icc_ap_read,
+      .writefn = icc_ap_write,
+    },
+    { .name = "ICC_AP1R1_EL1", .state = ARM_CP_STATE_BOTH,
+      .opc0 = 3, .opc1 = 0, .crn = 12, .crm = 9, .opc2 = 1,
+      .type = ARM_CP_IO | ARM_CP_NO_RAW,
+      .access = PL1_RW, .accessfn = gicv3_irq_access,
+      .readfn = icc_ap_read,
+      .writefn = icc_ap_write,
+    },
+};
+
+static const ARMCPRegInfo gicv3_cpuif_icc_apxr23_reginfo[] = {
+    { .name = "ICC_AP0R2_EL1", .state = ARM_CP_STATE_BOTH,
+      .opc0 = 3, .opc1 = 0, .crn = 12, .crm = 8, .opc2 = 6,
+      .type = ARM_CP_IO | ARM_CP_NO_RAW,
+      .access = PL1_RW, .accessfn = gicv3_fiq_access,
+      .readfn = icc_ap_read,
+      .writefn = icc_ap_write,
+    },
+    { .name = "ICC_AP0R3_EL1", .state = ARM_CP_STATE_BOTH,
+      .opc0 = 3, .opc1 = 0, .crn = 12, .crm = 8, .opc2 = 7,
+      .type = ARM_CP_IO | ARM_CP_NO_RAW,
+      .access = PL1_RW, .accessfn = gicv3_fiq_access,
+      .readfn = icc_ap_read,
+      .writefn = icc_ap_write,
+    },
+    { .name = "ICC_AP1R2_EL1", .state = ARM_CP_STATE_BOTH,
+      .opc0 = 3, .opc1 = 0, .crn = 12, .crm = 9, .opc2 = 2,
+      .type = ARM_CP_IO | ARM_CP_NO_RAW,
+      .access = PL1_RW, .accessfn = gicv3_irq_access,
+      .readfn = icc_ap_read,
+      .writefn = icc_ap_write,
+    },
+    { .name = "ICC_AP1R3_EL1", .state = ARM_CP_STATE_BOTH,
+      .opc0 = 3, .opc1 = 0, .crn = 12, .crm = 9, .opc2 = 3,
+      .type = ARM_CP_IO | ARM_CP_NO_RAW,
+      .access = PL1_RW, .accessfn = gicv3_irq_access,
+      .readfn = icc_ap_read,
+      .writefn = icc_ap_write,
+    },
+};
+
+static const ARMCPRegInfo gicv3_cpuif_gicv3_nmi_reginfo[] = {
+    { .name = "ICC_NMIAR1_EL1", .state = ARM_CP_STATE_BOTH,
+      .opc0 = 3, .opc1 = 0, .crn = 12, .crm = 9, .opc2 = 5,
+      .type = ARM_CP_IO | ARM_CP_NO_RAW,
+      .access = PL1_R, .accessfn = gicv3_irq_access,
+      .readfn = icc_nmiar1_read,
+    },
 };
 
 static uint64_t ich_ap_read(CPUARMState *env, const ARMCPRegInfo *ri)
@@ -2331,8 +2713,12 @@ static void ich_ap_write(CPUARMState *env, const ARMCPRegInfo *ri,
 
     trace_gicv3_ich_ap_write(ri->crm & 1, regno, gicv3_redist_affid(cs), value);
 
-    cs->ich_apr[grp][regno] = value & 0xFFFFFFFFU;
-    gicv3_cpuif_virt_update(cs);
+    if (cs->nmi_support) {
+        cs->ich_apr[grp][regno] = value & (0xFFFFFFFFU | ICV_AP1R_EL1_NMI);
+    } else {
+        cs->ich_apr[grp][regno] = value & 0xFFFFFFFFU;
+    }
+    gicv3_cpuif_virt_irq_fiq_update(cs);
 }
 
 static uint64_t ich_hcr_read(CPUARMState *env, const ARMCPRegInfo *ri)
@@ -2448,6 +2834,11 @@ static void ich_lr_write(CPUARMState *env, const ARMCPRegInfo *ri,
                           8 - cs->vpribits, 0);
     }
 
+    /* Enforce RES0 bit in NMI field when FEAT_GICv3_NMI is not implemented */
+    if (!cs->nmi_support) {
+        value &= ~ICH_LR_EL2_NMI;
+    }
+
     cs->ich_lr_el2[regno] = value;
     gicv3_cpuif_virt_update(cs);
 }
@@ -2458,10 +2849,14 @@ static uint64_t ich_vtr_read(CPUARMState *env, const ARMCPRegInfo *ri)
     uint64_t value;
 
     value = ((cs->num_list_regs - 1) << ICH_VTR_EL2_LISTREGS_SHIFT)
-        | ICH_VTR_EL2_TDS | ICH_VTR_EL2_NV4 | ICH_VTR_EL2_A3V
+        | ICH_VTR_EL2_TDS | ICH_VTR_EL2_A3V
         | (1 << ICH_VTR_EL2_IDBITS_SHIFT)
         | ((cs->vprebits - 1) << ICH_VTR_EL2_PREBITS_SHIFT)
         | ((cs->vpribits - 1) << ICH_VTR_EL2_PRIBITS_SHIFT);
+
+    if (cs->gic->revision < 4) {
+        value |= ICH_VTR_EL2_NV4;
+    }
 
     trace_gicv3_ich_vtr_read(gicv3_redist_affid(cs), value);
     return value;
@@ -2508,6 +2903,7 @@ static const ARMCPRegInfo gicv3_cpuif_hcr_reginfo[] = {
     { .name = "ICH_AP0R0_EL2", .state = ARM_CP_STATE_BOTH,
       .opc0 = 3, .opc1 = 4, .crn = 12, .crm = 8, .opc2 = 0,
       .type = ARM_CP_IO | ARM_CP_NO_RAW,
+      .nv2_redirect_offset = 0x480,
       .access = PL2_RW,
       .readfn = ich_ap_read,
       .writefn = ich_ap_write,
@@ -2515,6 +2911,7 @@ static const ARMCPRegInfo gicv3_cpuif_hcr_reginfo[] = {
     { .name = "ICH_AP1R0_EL2", .state = ARM_CP_STATE_BOTH,
       .opc0 = 3, .opc1 = 4, .crn = 12, .crm = 9, .opc2 = 0,
       .type = ARM_CP_IO | ARM_CP_NO_RAW,
+      .nv2_redirect_offset = 0x4a0,
       .access = PL2_RW,
       .readfn = ich_ap_read,
       .writefn = ich_ap_write,
@@ -2522,6 +2919,7 @@ static const ARMCPRegInfo gicv3_cpuif_hcr_reginfo[] = {
     { .name = "ICH_HCR_EL2", .state = ARM_CP_STATE_BOTH,
       .opc0 = 3, .opc1 = 4, .crn = 12, .crm = 11, .opc2 = 0,
       .type = ARM_CP_IO | ARM_CP_NO_RAW,
+      .nv2_redirect_offset = 0x4c0,
       .access = PL2_RW,
       .readfn = ich_hcr_read,
       .writefn = ich_hcr_write,
@@ -2553,17 +2951,18 @@ static const ARMCPRegInfo gicv3_cpuif_hcr_reginfo[] = {
     { .name = "ICH_VMCR_EL2", .state = ARM_CP_STATE_BOTH,
       .opc0 = 3, .opc1 = 4, .crn = 12, .crm = 11, .opc2 = 7,
       .type = ARM_CP_IO | ARM_CP_NO_RAW,
+      .nv2_redirect_offset = 0x4c8,
       .access = PL2_RW,
       .readfn = ich_vmcr_read,
       .writefn = ich_vmcr_write,
     },
-    REGINFO_SENTINEL
 };
 
 static const ARMCPRegInfo gicv3_cpuif_ich_apxr1_reginfo[] = {
     { .name = "ICH_AP0R1_EL2", .state = ARM_CP_STATE_BOTH,
       .opc0 = 3, .opc1 = 4, .crn = 12, .crm = 8, .opc2 = 1,
       .type = ARM_CP_IO | ARM_CP_NO_RAW,
+      .nv2_redirect_offset = 0x488,
       .access = PL2_RW,
       .readfn = ich_ap_read,
       .writefn = ich_ap_write,
@@ -2571,17 +2970,18 @@ static const ARMCPRegInfo gicv3_cpuif_ich_apxr1_reginfo[] = {
     { .name = "ICH_AP1R1_EL2", .state = ARM_CP_STATE_BOTH,
       .opc0 = 3, .opc1 = 4, .crn = 12, .crm = 9, .opc2 = 1,
       .type = ARM_CP_IO | ARM_CP_NO_RAW,
+      .nv2_redirect_offset = 0x4a8,
       .access = PL2_RW,
       .readfn = ich_ap_read,
       .writefn = ich_ap_write,
     },
-    REGINFO_SENTINEL
 };
 
 static const ARMCPRegInfo gicv3_cpuif_ich_apxr23_reginfo[] = {
     { .name = "ICH_AP0R2_EL2", .state = ARM_CP_STATE_BOTH,
       .opc0 = 3, .opc1 = 4, .crn = 12, .crm = 8, .opc2 = 2,
       .type = ARM_CP_IO | ARM_CP_NO_RAW,
+      .nv2_redirect_offset = 0x490,
       .access = PL2_RW,
       .readfn = ich_ap_read,
       .writefn = ich_ap_write,
@@ -2589,6 +2989,7 @@ static const ARMCPRegInfo gicv3_cpuif_ich_apxr23_reginfo[] = {
     { .name = "ICH_AP0R3_EL2", .state = ARM_CP_STATE_BOTH,
       .opc0 = 3, .opc1 = 4, .crn = 12, .crm = 8, .opc2 = 3,
       .type = ARM_CP_IO | ARM_CP_NO_RAW,
+      .nv2_redirect_offset = 0x498,
       .access = PL2_RW,
       .readfn = ich_ap_read,
       .writefn = ich_ap_write,
@@ -2596,6 +2997,7 @@ static const ARMCPRegInfo gicv3_cpuif_ich_apxr23_reginfo[] = {
     { .name = "ICH_AP1R2_EL2", .state = ARM_CP_STATE_BOTH,
       .opc0 = 3, .opc1 = 4, .crn = 12, .crm = 9, .opc2 = 2,
       .type = ARM_CP_IO | ARM_CP_NO_RAW,
+      .nv2_redirect_offset = 0x4b0,
       .access = PL2_RW,
       .readfn = ich_ap_read,
       .writefn = ich_ap_write,
@@ -2603,11 +3005,11 @@ static const ARMCPRegInfo gicv3_cpuif_ich_apxr23_reginfo[] = {
     { .name = "ICH_AP1R3_EL2", .state = ARM_CP_STATE_BOTH,
       .opc0 = 3, .opc1 = 4, .crn = 12, .crm = 9, .opc2 = 3,
       .type = ARM_CP_IO | ARM_CP_NO_RAW,
+      .nv2_redirect_offset = 0x4b8,
       .access = PL2_RW,
       .readfn = ich_ap_read,
       .writefn = ich_ap_write,
     },
-    REGINFO_SENTINEL
 };
 
 static void gicv3_cpuif_el_change_hook(ARMCPU *cpu, void *opaque)
@@ -2615,6 +3017,12 @@ static void gicv3_cpuif_el_change_hook(ARMCPU *cpu, void *opaque)
     GICv3CPUState *cs = opaque;
 
     gicv3_cpuif_update(cs);
+    /*
+     * Because vLPIs are only pending in NonSecure state,
+     * an EL change can change the VIRQ/VFIQ status (but
+     * cannot affect the maintenance interrupt state)
+     */
+    gicv3_cpuif_virt_irq_fiq_update(cs);
 }
 
 void gicv3_init_cpuif(GICv3State *s)
@@ -2628,21 +3036,89 @@ void gicv3_init_cpuif(GICv3State *s)
         ARMCPU *cpu = ARM_CPU(qemu_get_cpu(i));
         GICv3CPUState *cs = &s->cpu[i];
 
+        /*
+         * If the CPU doesn't define a GICv3 configuration, probably because
+         * in real hardware it doesn't have one, then we use default values
+         * matching the one used by most Arm CPUs. This applies to:
+         *  cpu->gic_num_lrs
+         *  cpu->gic_vpribits
+         *  cpu->gic_vprebits
+         *  cpu->gic_pribits
+         */
+
         /* Note that we can't just use the GICv3CPUState as an opaque pointer
          * in define_arm_cp_regs_with_opaque(), because when we're called back
          * it might be with code translated by CPU 0 but run by CPU 1, in
          * which case we'd get the wrong value.
          * So instead we define the regs with no ri->opaque info, and
          * get back to the GICv3CPUState from the CPUARMState.
+         *
+         * These CP regs callbacks can be called from either TCG or HVF code.
          */
         define_arm_cp_regs(cpu, gicv3_cpuif_reginfo);
-        if (arm_feature(&cpu->env, ARM_FEATURE_EL2)
-            && cpu->gic_num_lrs) {
+
+        /*
+         * If the CPU implements FEAT_NMI and FEAT_GICv3 it must also
+         * implement FEAT_GICv3_NMI, which is the CPU interface part
+         * of NMI support. This is distinct from whether the GIC proper
+         * (redistributors and distributor) have NMI support. In QEMU
+         * that is a property of the GIC device in s->nmi_support;
+         * cs->nmi_support indicates the CPU interface's support.
+         */
+        if (cpu_isar_feature(aa64_nmi, cpu)) {
+            cs->nmi_support = true;
+            define_arm_cp_regs(cpu, gicv3_cpuif_gicv3_nmi_reginfo);
+        }
+
+        /*
+         * The CPU implementation specifies the number of supported
+         * bits of physical priority. For backwards compatibility
+         * of migration, we have a compat property that forces use
+         * of 8 priority bits regardless of what the CPU really has.
+         */
+        if (s->force_8bit_prio) {
+            cs->pribits = 8;
+        } else {
+            cs->pribits = cpu->gic_pribits ?: 5;
+        }
+
+        /*
+         * The GICv3 has separate ID register fields for virtual priority
+         * and preemption bit values, but only a single ID register field
+         * for the physical priority bits. The preemption bit count is
+         * always the same as the priority bit count, except that 8 bits
+         * of priority means 7 preemption bits. We precalculate the
+         * preemption bits because it simplifies the code and makes the
+         * parallels between the virtual and physical bits of the GIC
+         * a bit clearer.
+         */
+        cs->prebits = cs->pribits;
+        if (cs->prebits == 8) {
+            cs->prebits--;
+        }
+        /*
+         * Check that CPU code defining pribits didn't violate
+         * architectural constraints our implementation relies on.
+         */
+        g_assert(cs->pribits >= 4 && cs->pribits <= 8);
+
+        /*
+         * gicv3_cpuif_reginfo[] defines ICC_AP*R0_EL1; add definitions
+         * for ICC_AP*R{1,2,3}_EL1 if the prebits value requires them.
+         */
+        if (cs->prebits >= 6) {
+            define_arm_cp_regs(cpu, gicv3_cpuif_icc_apxr1_reginfo);
+        }
+        if (cs->prebits == 7) {
+            define_arm_cp_regs(cpu, gicv3_cpuif_icc_apxr23_reginfo);
+        }
+
+        if (arm_feature(&cpu->env, ARM_FEATURE_EL2)) {
             int j;
 
-            cs->num_list_regs = cpu->gic_num_lrs;
-            cs->vpribits = cpu->gic_vpribits;
-            cs->vprebits = cpu->gic_vprebits;
+            cs->num_list_regs = cpu->gic_num_lrs ?: 4;
+            cs->vpribits = cpu->gic_vpribits ?: 5;
+            cs->vprebits = cpu->gic_vprebits ?: 5;
 
             /* Check against architectural constraints: getting these
              * wrong would be a bug in the CPU code defining these,
@@ -2664,6 +3140,7 @@ void gicv3_init_cpuif(GICv3State *s)
                       .opc0 = 3, .opc1 = 4, .crn = 12,
                       .crm = 12 + (j >> 3), .opc2 = j & 7,
                       .type = ARM_CP_IO | ARM_CP_NO_RAW,
+                      .nv2_redirect_offset = 0x400 + 8 * j,
                       .access = PL2_RW,
                       .readfn = ich_lr_read,
                       .writefn = ich_lr_write,
@@ -2676,7 +3153,6 @@ void gicv3_init_cpuif(GICv3State *s)
                       .readfn = ich_lr_read,
                       .writefn = ich_lr_write,
                     },
-                    REGINFO_SENTINEL
                 };
                 define_arm_cp_regs(cpu, lr_regset);
             }
@@ -2687,6 +3163,16 @@ void gicv3_init_cpuif(GICv3State *s)
                 define_arm_cp_regs(cpu, gicv3_cpuif_ich_apxr23_reginfo);
             }
         }
-        arm_register_el_change_hook(cpu, gicv3_cpuif_el_change_hook, cs);
+        if (tcg_enabled() || qtest_enabled()) {
+            /*
+             * We can only trap EL changes with TCG. However the GIC interrupt
+             * state only changes on EL changes involving EL2 or EL3, so for
+             * the non-TCG case this is OK, as EL2 and EL3 can't exist.
+             */
+            arm_register_el_change_hook(cpu, gicv3_cpuif_el_change_hook, cs);
+        } else {
+            assert(!arm_feature(&cpu->env, ARM_FEATURE_EL2));
+            assert(!arm_feature(&cpu->env, ARM_FEATURE_EL3));
+        }
     }
 }

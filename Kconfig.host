@@ -11,6 +11,9 @@ config OPENGL
 config X11
     bool
 
+config PIXMAN
+    bool
+
 config SPICE
     bool
 
@@ -20,22 +23,19 @@ config IVSHMEM
 config TPM
     bool
 
+config FDT
+    bool
+
 config VHOST_USER
     bool
-    select VHOST
 
 config VHOST_VDPA
     bool
-    select VHOST
 
 config VHOST_KERNEL
     bool
-    select VHOST
 
 config VIRTFS
-    bool
-
-config PVRDMA
     bool
 
 config MULTIPROCESS_ALLOWED
@@ -45,3 +45,10 @@ config MULTIPROCESS_ALLOWED
 config FUZZ
     bool
     select SPARSE_MEM
+
+config VFIO_USER_SERVER_ALLOWED
+    bool
+    imply VFIO_USER_SERVER
+
+config HV_BALLOON_POSSIBLE
+    bool

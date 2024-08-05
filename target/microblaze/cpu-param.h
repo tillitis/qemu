@@ -6,7 +6,7 @@
  */
 
 #ifndef MICROBLAZE_CPU_PARAM_H
-#define MICROBLAZE_CPU_PARAM_H 1
+#define MICROBLAZE_CPU_PARAM_H
 
 /*
  * While system mode can address up to 64 bits of address space,
@@ -28,6 +28,8 @@
 
 /* FIXME: MB uses variable pages down to 1K but linux only uses 4k.  */
 #define TARGET_PAGE_BITS 12
-#define NB_MMU_MODES 3
+
+/* MicroBlaze is always in-order. */
+#define TCG_GUEST_DEFAULT_MO  TCG_MO_ALL
 
 #endif

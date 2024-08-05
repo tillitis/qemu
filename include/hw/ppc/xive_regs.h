@@ -48,6 +48,22 @@
 
 #define TM_SHIFT                16
 
+/*
+ * TIMA addresses are 12-bits (4k page).
+ * The MSB indicates a special op with side effect, which can be
+ * refined with bit 10 (see below).
+ * The registers, logically grouped in 4 rings (a quad-word each), are
+ * defined on the 6 LSBs (offset below 0x40)
+ * In between, we can add a cache line index from 0...3 (ie, 0, 0x80,
+ * 0x100, 0x180) to select a specific snooper. Those 'snoop port
+ * address' bits should be dropped when processing the operations as
+ * they are all equivalent.
+ */
+#define TM_ADDRESS_MASK         0xC3F
+#define TM_SPECIAL_OP           0x800
+#define TM_RING_OFFSET          0x30
+#define TM_REG_OFFSET           0x3F
+
 /* TM register offsets */
 #define TM_QW0_USER             0x000 /* All rings */
 #define TM_QW1_OS               0x010 /* Ring 0..2 */
@@ -151,7 +167,7 @@ typedef struct XiveEAS {
 #define xive_eas_is_valid(eas)   (be64_to_cpu((eas)->w) & EAS_VALID)
 #define xive_eas_is_masked(eas)  (be64_to_cpu((eas)->w) & EAS_MASKED)
 
-void xive_eas_pic_print_info(XiveEAS *eas, uint32_t lisn, Monitor *mon);
+void xive_eas_pic_print_info(XiveEAS *eas, uint32_t lisn, GString *buf);
 
 static inline uint64_t xive_get_field64(uint64_t mask, uint64_t word)
 {
@@ -245,9 +261,9 @@ static inline uint64_t xive_end_qaddr(XiveEND *end)
         be32_to_cpu(end->w3);
 }
 
-void xive_end_pic_print_info(XiveEND *end, uint32_t end_idx, Monitor *mon);
-void xive_end_queue_pic_print_info(XiveEND *end, uint32_t width, Monitor *mon);
-void xive_end_eas_pic_print_info(XiveEND *end, uint32_t end_idx, Monitor *mon);
+void xive_end_pic_print_info(XiveEND *end, uint32_t end_idx, GString *buf);
+void xive_end_queue_pic_print_info(XiveEND *end, uint32_t width, GString *buf);
+void xive_end_eas_pic_print_info(XiveEND *end, uint32_t end_idx, GString *buf);
 
 /* Notification Virtual Target (NVT) */
 typedef struct XiveNVT {

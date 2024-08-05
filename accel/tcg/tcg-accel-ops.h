@@ -9,14 +9,14 @@
  * See the COPYING file in the top-level directory.
  */
 
-#ifndef TCG_CPUS_H
-#define TCG_CPUS_H
+#ifndef TCG_ACCEL_OPS_H
+#define TCG_ACCEL_OPS_H
 
 #include "sysemu/cpus.h"
 
-void tcg_cpus_destroy(CPUState *cpu);
-int tcg_cpus_exec(CPUState *cpu);
+void tcg_cpu_destroy(CPUState *cpu);
+int tcg_cpu_exec(CPUState *cpu);
 void tcg_handle_interrupt(CPUState *cpu, int mask);
 void tcg_cpu_init_cflags(CPUState *cpu, bool parallel);
 
-#endif /* TCG_CPUS_H */
+#endif /* TCG_ACCEL_OPS_H */

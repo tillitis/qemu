@@ -19,9 +19,13 @@ OBJECT_DECLARE_TYPE(AspeedSCUState, AspeedSCUClass, ASPEED_SCU)
 #define TYPE_ASPEED_2400_SCU TYPE_ASPEED_SCU "-ast2400"
 #define TYPE_ASPEED_2500_SCU TYPE_ASPEED_SCU "-ast2500"
 #define TYPE_ASPEED_2600_SCU TYPE_ASPEED_SCU "-ast2600"
+#define TYPE_ASPEED_2700_SCU TYPE_ASPEED_SCU "-ast2700"
+#define TYPE_ASPEED_2700_SCUIO TYPE_ASPEED_SCU "io" "-ast2700"
+#define TYPE_ASPEED_1030_SCU TYPE_ASPEED_SCU "-ast1030"
 
 #define ASPEED_SCU_NR_REGS (0x1A8 >> 2)
 #define ASPEED_AST2600_SCU_NR_REGS (0xE20 >> 2)
+#define ASPEED_AST2700_SCU_NR_REGS (0xE20 >> 2)
 
 struct AspeedSCUState {
     /*< private >*/
@@ -30,7 +34,7 @@ struct AspeedSCUState {
     /*< public >*/
     MemoryRegion iomem;
 
-    uint32_t regs[ASPEED_AST2600_SCU_NR_REGS];
+    uint32_t regs[ASPEED_AST2700_SCU_NR_REGS];
     uint32_t silicon_rev;
     uint32_t hw_strap1;
     uint32_t hw_strap2;
@@ -45,10 +49,15 @@ struct AspeedSCUState {
 #define AST2600_A1_SILICON_REV   0x05010303U
 #define AST2600_A2_SILICON_REV   0x05020303U
 #define AST2600_A3_SILICON_REV   0x05030303U
+#define AST1030_A0_SILICON_REV   0x80000000U
+#define AST1030_A1_SILICON_REV   0x80010000U
+#define AST2700_A0_SILICON_REV   0x06000103U
+#define AST2720_A0_SILICON_REV   0x06000203U
+#define AST2750_A0_SILICON_REV   0x06000003U
 
 #define ASPEED_IS_AST2500(si_rev)     ((((si_rev) >> 24) & 0xff) == 0x04)
 
-extern bool is_supported_silicon_rev(uint32_t silicon_rev);
+bool is_supported_silicon_rev(uint32_t silicon_rev);
 
 
 struct AspeedSCUClass {
@@ -56,8 +65,10 @@ struct AspeedSCUClass {
 
     const uint32_t *resets;
     uint32_t (*calc_hpll)(AspeedSCUState *s, uint32_t hpll_reg);
+    uint32_t (*get_apb)(AspeedSCUState *s);
     uint32_t apb_divider;
     uint32_t nr_regs;
+    bool clkin_25Mhz;
     const MemoryRegionOps *ops;
 };
 
@@ -82,7 +93,8 @@ uint32_t aspeed_scu_get_apb_freq(AspeedSCUState *s);
  *       1. 2012/12/29 Ryan Chen Create
  */
 
-/* SCU08   Clock Selection Register
+/*
+ * SCU08   Clock Selection Register
  *
  *  31     Enable Video Engine clock dynamic slow down
  *  30:28  Video Engine clock slow down setting
@@ -104,7 +116,8 @@ uint32_t aspeed_scu_get_apb_freq(AspeedSCUState *s);
  */
 #define SCU_CLK_GET_PCLK_DIV(x)                    (((x) >> 23) & 0x7)
 
-/* SCU24   H-PLL Parameter Register (for Aspeed AST2400 SOC)
+/*
+ * SCU24   H-PLL Parameter Register (for Aspeed AST2400 SOC)
  *
  *  18     H-PLL parameter selection
  *           0: Select H-PLL by strapping resistors
@@ -122,7 +135,8 @@ uint32_t aspeed_scu_get_apb_freq(AspeedSCUState *s);
 #define SCU_AST2400_H_PLL_BYPASS_EN                (0x1 << 17)
 #define SCU_AST2400_H_PLL_OFF                      (0x1 << 16)
 
-/* SCU24   H-PLL Parameter Register (for Aspeed AST2500 SOC)
+/*
+ * SCU24   H-PLL Parameter Register (for Aspeed AST2500 SOC)
  *
  *  21     Enable H-PLL reset
  *  20     Enable H-PLL bypass mode
@@ -139,7 +153,8 @@ uint32_t aspeed_scu_get_apb_freq(AspeedSCUState *s);
 #define SCU_H_PLL_BYPASS_EN                        (0x1 << 20)
 #define SCU_H_PLL_OFF                              (0x1 << 19)
 
-/* SCU70  Hardware Strapping Register definition (for Aspeed AST2400 SOC)
+/*
+ * SCU70  Hardware Strapping Register definition (for Aspeed AST2400 SOC)
  *
  * 31:29  Software defined strapping registers
  * 28:27  DRAM size setting (for VGA driver use)
@@ -315,5 +330,76 @@ uint32_t aspeed_scu_get_apb_freq(AspeedSCUState *s);
         SCU_AST2500_HW_STRAP_SET_AXI_AHB_RATIO(AXI_AHB_RATIO_2_1) |     \
         SCU_HW_STRAP_VGA_SIZE_SET(VGA_16M_DRAM) |                       \
         SCU_AST2500_HW_STRAP_RESERVED1)
+
+/*
+ * SCU200   H-PLL Parameter Register (for Aspeed AST2600 SOC)
+ *
+ *  28:26  H-PLL Parameters
+ *  25     Enable H-PLL reset
+ *  24     Enable H-PLL bypass mode
+ *  23     Turn off H-PLL
+ *  22:19  H-PLL Post Divider (P)
+ *  18:13  H-PLL Numerator (M)
+ *  12:0   H-PLL Denumerator (N)
+ *
+ *  (Output frequency) = CLKIN(25MHz) * [(M+1) / (N+1)] / (P+1)
+ *
+ * The default frequency is 1200Mhz when CLKIN = 25MHz
+ */
+#define SCU_AST2600_H_PLL_BYPASS_EN                        (0x1 << 24)
+#define SCU_AST2600_H_PLL_OFF                              (0x1 << 23)
+
+/* STRAP1 SCU500 */
+#define SCU_AST2600_HW_STRAP_BOOT_SRC_EMMC            (0x1 << 2)
+#define SCU_AST2600_HW_STRAP_BOOT_SRC_SPI             (0x0 << 2)
+
+/*
+ * SCU310   Clock Selection Register Set 4 (for Aspeed AST1030 SOC)
+ *
+ *  31     I3C Clock Source selection
+ *  30:28  I3C clock divider selection
+ *  26:24  MAC AHB clock divider selection
+ *  22:20  RGMII 125MHz clock divider ration
+ *  19:16  RGMII 50MHz clock divider ration
+ *  15     LHCLK clock generation/output enable control
+ *  14:12  LHCLK divider selection
+ *  11:8   APB Bus PCLK divider selection
+ *  7      Select PECI clock source
+ *  6      Select UART debug port clock source
+ *  5      Select UART6 clock source
+ *  4      Select UART5 clock source
+ *  3      Select UART4 clock source
+ *  2      Select UART3 clock source
+ *  1      Select UART2 clock source
+ *  0      Select UART1 clock source
+ */
+#define SCU_AST1030_CLK_GET_PCLK_DIV(x)                    (((x) >> 8) & 0xf)
+
+/*
+ * SCU280   Clock Selection 1 Register (for Aspeed AST2700 SCUIO)
+ *
+ *  31:29  MHCLK_DIV
+ *  28     Reserved
+ *  27:25  RGMIICLK_DIV
+ *  24     Reserved
+ *  23:21  RMIICLK_DIV
+ *  20:18  PCLK_DIV
+ *  17:14  SDCLK_DIV
+ *  13     SDCLK_SEL
+ *  12     UART13CLK_SEL
+ *  11     UART12CLK_SEL
+ *  10     UART11CLK_SEL
+ *  9      UART10CLK_SEL
+ *  8      UART9CLK_SEL
+ *  7      UART8CLK_SEL
+ *  6      UART7CLK_SEL
+ *  5      UART6CLK_SEL
+ *  4      UARTDBCLK_SEL
+ *  3      UART4CLK_SEL
+ *  2      UART3CLK_SEL
+ *  1      UART2CLK_SEL
+ *  0      UART1CLK_SEL
+ */
+#define SCUIO_AST2700_CLK_GET_PCLK_DIV(x)                    (((x) >> 18) & 0x7)
 
 #endif /* ASPEED_SCU_H */

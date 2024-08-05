@@ -4,6 +4,5 @@
 #
 #CONFIG_PCI_DEVICES=n
 
-# Boards:
-#
-CONFIG_DINO=y
+# Boards are selected by default, uncomment to keep out of the build.
+# CONFIG_HPPA_B160L=n

@@ -1,7 +1,7 @@
 /*
  * QEMU RISC-V Board Compatible with Tillitis TK1 platform
  *
- * Copyright (c) 2022 Tillitis AB
+ * Copyright (c) 2022-2024 Tillitis AB
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -45,6 +45,7 @@ typedef struct TK1State {
     char *fifo_chr_name;
     uint8_t fifo_rx[TK1_RX_FIFO_SIZE];
     uint8_t fifo_rx_len;
+    bool htif_enabled;
     bool app_mode;
     uint32_t app_addr;
     uint32_t app_size;

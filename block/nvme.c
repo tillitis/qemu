@@ -16,13 +16,17 @@
 #include "qapi/error.h"
 #include "qapi/qmp/qdict.h"
 #include "qapi/qmp/qstring.h"
+#include "qemu/defer-call.h"
 #include "qemu/error-report.h"
 #include "qemu/main-loop.h"
 #include "qemu/module.h"
 #include "qemu/cutils.h"
 #include "qemu/option.h"
+#include "qemu/memalign.h"
 #include "qemu/vfio-helpers.h"
+#include "block/block-io.h"
 #include "block/block_int.h"
+#include "sysemu/block-backend.h"
 #include "sysemu/replay.h"
 #include "trace.h"
 
@@ -117,7 +121,6 @@ struct BDRVNVMeState {
     int blkshift;
 
     uint64_t max_transfer;
-    bool plugged;
 
     bool supports_write_zeroes;
     bool supports_discard;
@@ -165,12 +168,13 @@ static QemuOptsList runtime_opts = {
 static bool nvme_init_queue(BDRVNVMeState *s, NVMeQueue *q,
                             unsigned nentries, size_t entry_bytes, Error **errp)
 {
+    ERRP_GUARD();
     size_t bytes;
     int r;
 
-    bytes = ROUND_UP(nentries * entry_bytes, qemu_real_host_page_size);
+    bytes = ROUND_UP(nentries * entry_bytes, qemu_real_host_page_size());
     q->head = q->tail = 0;
-    q->queue = qemu_try_memalign(qemu_real_host_page_size, bytes);
+    q->queue = qemu_try_memalign(qemu_real_host_page_size(), bytes);
     if (!q->queue) {
         error_setg(errp, "Cannot allocate queue");
         return false;
@@ -218,6 +222,7 @@ static NVMeQueuePair *nvme_create_queue_pair(BDRVNVMeState *s,
                                              unsigned idx, size_t size,
                                              Error **errp)
 {
+    ERRP_GUARD();
     int i, r;
     NVMeQueuePair *q;
     uint64_t prp_list_iova;
@@ -231,8 +236,8 @@ static NVMeQueuePair *nvme_create_queue_pair(BDRVNVMeState *s,
     trace_nvme_create_queue_pair(idx, q, size, aio_context,
                                  event_notifier_get_fd(s->irq_notifier));
     bytes = QEMU_ALIGN_UP(s->page_size * NVME_NUM_REQS,
-                          qemu_real_host_page_size);
-    q->prp_list_pages = qemu_try_memalign(qemu_real_host_page_size, bytes);
+                          qemu_real_host_page_size());
+    q->prp_list_pages = qemu_try_memalign(qemu_real_host_page_size(), bytes);
     if (!q->prp_list_pages) {
         error_setg(errp, "Cannot allocate PRP page list");
         goto fail;
@@ -280,7 +285,7 @@ static void nvme_kick(NVMeQueuePair *q)
 {
     BDRVNVMeState *s = q->s;
 
-    if (s->plugged || !q->need_kick) {
+    if (!q->need_kick) {
         return;
     }
     trace_nvme_kick(s, q->index);
@@ -292,32 +297,40 @@ static void nvme_kick(NVMeQueuePair *q)
     q->need_kick = 0;
 }
 
-/* Find a free request element if any, otherwise:
- * a) if in coroutine context, try to wait for one to become available;
- * b) if not in coroutine, return NULL;
- */
-static NVMeRequest *nvme_get_free_req(NVMeQueuePair *q)
+static NVMeRequest *nvme_get_free_req_nofail_locked(NVMeQueuePair *q)
 {
     NVMeRequest *req;
-
-    qemu_mutex_lock(&q->lock);
-
-    while (q->free_req_head == -1) {
-        if (qemu_in_coroutine()) {
-            trace_nvme_free_req_queue_wait(q->s, q->index);
-            qemu_co_queue_wait(&q->free_req_queue, &q->lock);
-        } else {
-            qemu_mutex_unlock(&q->lock);
-            return NULL;
-        }
-    }
 
     req = &q->reqs[q->free_req_head];
     q->free_req_head = req->free_req_next;
     req->free_req_next = -1;
-
-    qemu_mutex_unlock(&q->lock);
     return req;
+}
+
+/* Return a free request element if any, otherwise return NULL.  */
+static NVMeRequest *nvme_get_free_req_nowait(NVMeQueuePair *q)
+{
+    QEMU_LOCK_GUARD(&q->lock);
+    if (q->free_req_head == -1) {
+        return NULL;
+    }
+    return nvme_get_free_req_nofail_locked(q);
+}
+
+/*
+ * Wait for a free request to become available if necessary, then
+ * return it.
+ */
+static coroutine_fn NVMeRequest *nvme_get_free_req(NVMeQueuePair *q)
+{
+    QEMU_LOCK_GUARD(&q->lock);
+
+    while (q->free_req_head == -1) {
+        trace_nvme_free_req_queue_wait(q->s, q->index);
+        qemu_co_queue_wait(&q->free_req_queue, &q->lock);
+    }
+
+    return nvme_get_free_req_nofail_locked(q);
 }
 
 /* With q->lock */
@@ -377,10 +390,6 @@ static bool nvme_process_completion(NVMeQueuePair *q)
     NvmeCqe *c;
 
     trace_nvme_process_completion(s, q->index, q->inflight);
-    if (s->plugged) {
-        trace_nvme_process_completion_queue_plugged(s, q->index);
-        return false;
-    }
 
     /*
      * Support re-entrancy when a request cb() function invokes aio_poll().
@@ -410,9 +419,10 @@ static bool nvme_process_completion(NVMeQueuePair *q)
             q->cq_phase = !q->cq_phase;
         }
         cid = le16_to_cpu(c->cid);
-        if (cid == 0 || cid > NVME_QUEUE_SIZE) {
-            warn_report("NVMe: Unexpected CID in completion queue: %"PRIu32", "
-                        "queue size: %u", cid, NVME_QUEUE_SIZE);
+        if (cid == 0 || cid > NVME_NUM_REQS) {
+            warn_report("NVMe: Unexpected CID in completion queue: %" PRIu32
+                        ", should be within: 1..%u inclusively", cid,
+                        NVME_NUM_REQS);
             continue;
         }
         trace_nvme_complete_command(s, q->index, cid);
@@ -470,6 +480,15 @@ static void nvme_trace_command(const NvmeCmd *cmd)
     }
 }
 
+static void nvme_deferred_fn(void *opaque)
+{
+    NVMeQueuePair *q = opaque;
+
+    QEMU_LOCK_GUARD(&q->lock);
+    nvme_kick(q);
+    nvme_process_completion(q);
+}
+
 static void nvme_submit_command(NVMeQueuePair *q, NVMeRequest *req,
                                 NvmeCmd *cmd, BlockCompletionFunc cb,
                                 void *opaque)
@@ -486,9 +505,9 @@ static void nvme_submit_command(NVMeQueuePair *q, NVMeRequest *req,
            q->sq.tail * NVME_SQ_ENTRY_BYTES, cmd, sizeof(*cmd));
     q->sq.tail = (q->sq.tail + 1) % NVME_QUEUE_SIZE;
     q->need_kick++;
-    nvme_kick(q);
-    nvme_process_completion(q);
     qemu_mutex_unlock(&q->lock);
+
+    defer_call(nvme_deferred_fn, q);
 }
 
 static void nvme_admin_cmd_sync_cb(void *opaque, int ret)
@@ -505,7 +524,7 @@ static int nvme_admin_cmd_sync(BlockDriverState *bs, NvmeCmd *cmd)
     AioContext *aio_context = bdrv_get_aio_context(bs);
     NVMeRequest *req;
     int ret = -EINPROGRESS;
-    req = nvme_get_free_req(q);
+    req = nvme_get_free_req_nowait(q);
     if (!req) {
         return -EBUSY;
     }
@@ -518,6 +537,7 @@ static int nvme_admin_cmd_sync(BlockDriverState *bs, NvmeCmd *cmd)
 /* Returns true on success, false on failure. */
 static bool nvme_identify(BlockDriverState *bs, int namespace, Error **errp)
 {
+    ERRP_GUARD();
     BDRVNVMeState *s = bs->opaque;
     bool ret = false;
     QEMU_AUTO_VFREE union {
@@ -532,9 +552,9 @@ static bool nvme_identify(BlockDriverState *bs, int namespace, Error **errp)
         .opcode = NVME_ADM_CMD_IDENTIFY,
         .cdw10 = cpu_to_le32(0x1),
     };
-    size_t id_size = QEMU_ALIGN_UP(sizeof(*id), qemu_real_host_page_size);
+    size_t id_size = QEMU_ALIGN_UP(sizeof(*id), qemu_real_host_page_size());
 
-    id = qemu_try_memalign(qemu_real_host_page_size, id_size);
+    id = qemu_try_memalign(qemu_real_host_page_size(), id_size);
     if (!id) {
         error_setg(errp, "Cannot allocate buffer for identify response");
         goto out;
@@ -605,10 +625,8 @@ out:
     return ret;
 }
 
-static bool nvme_poll_queue(NVMeQueuePair *q)
+static void nvme_poll_queue(NVMeQueuePair *q)
 {
-    bool progress = false;
-
     const size_t cqe_offset = q->cq.head * NVME_CQ_ENTRY_BYTES;
     NvmeCqe *cqe = (NvmeCqe *)&q->cq.queue[cqe_offset];
 
@@ -619,30 +637,23 @@ static bool nvme_poll_queue(NVMeQueuePair *q)
      * cannot race with itself.
      */
     if ((le16_to_cpu(cqe->status) & 0x1) == q->cq_phase) {
-        return false;
+        return;
     }
 
     qemu_mutex_lock(&q->lock);
     while (nvme_process_completion(q)) {
         /* Keep polling */
-        progress = true;
     }
     qemu_mutex_unlock(&q->lock);
-
-    return progress;
 }
 
-static bool nvme_poll_queues(BDRVNVMeState *s)
+static void nvme_poll_queues(BDRVNVMeState *s)
 {
-    bool progress = false;
     int i;
 
     for (i = 0; i < s->queue_count; i++) {
-        if (nvme_poll_queue(s->queues[i])) {
-            progress = true;
-        }
+        nvme_poll_queue(s->queues[i]);
     }
-    return progress;
 }
 
 static void nvme_handle_event(EventNotifier *n)
@@ -703,8 +714,30 @@ static bool nvme_poll_cb(void *opaque)
     EventNotifier *e = opaque;
     BDRVNVMeState *s = container_of(e, BDRVNVMeState,
                                     irq_notifier[MSIX_SHARED_IRQ_IDX]);
+    int i;
 
-    return nvme_poll_queues(s);
+    for (i = 0; i < s->queue_count; i++) {
+        NVMeQueuePair *q = s->queues[i];
+        const size_t cqe_offset = q->cq.head * NVME_CQ_ENTRY_BYTES;
+        NvmeCqe *cqe = (NvmeCqe *)&q->cq.queue[cqe_offset];
+
+        /*
+         * q->lock isn't needed because nvme_process_completion() only runs in
+         * the event loop thread and cannot race with itself.
+         */
+        if ((le16_to_cpu(cqe->status) & 0x1) != q->cq_phase) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void nvme_poll_ready(EventNotifier *e)
+{
+    BDRVNVMeState *s = container_of(e, BDRVNVMeState,
+                                    irq_notifier[MSIX_SHARED_IRQ_IDX]);
+
+    nvme_poll_queues(s);
 }
 
 static int nvme_init(BlockDriverState *bs, const char *device, int namespace,
@@ -839,7 +872,8 @@ static int nvme_init(BlockDriverState *bs, const char *device, int namespace,
     }
     aio_set_event_notifier(bdrv_get_aio_context(bs),
                            &s->irq_notifier[MSIX_SHARED_IRQ_IDX],
-                           false, nvme_handle_event, nvme_poll_cb);
+                           nvme_handle_event, nvme_poll_cb,
+                           nvme_poll_ready);
 
     if (!nvme_identify(bs, namespace, errp)) {
         ret = -EIO;
@@ -855,7 +889,7 @@ out:
         qemu_vfio_pci_unmap_bar(s->vfio, 0, (void *)regs, 0, sizeof(NvmeBar));
     }
 
-    /* Cleaning up is done in nvme_file_open() upon error. */
+    /* Cleaning up is done in nvme_open() upon error. */
     return ret;
 }
 
@@ -924,7 +958,7 @@ static void nvme_close(BlockDriverState *bs)
     g_free(s->queues);
     aio_set_event_notifier(bdrv_get_aio_context(bs),
                            &s->irq_notifier[MSIX_SHARED_IRQ_IDX],
-                           false, NULL, NULL);
+                           NULL, NULL, NULL);
     event_notifier_cleanup(&s->irq_notifier[MSIX_SHARED_IRQ_IDX]);
     qemu_vfio_pci_unmap_bar(s->vfio, 0, s->bar0_wo_map,
                             0, sizeof(NvmeBar) + NVME_DOORBELL_SIZE);
@@ -933,8 +967,8 @@ static void nvme_close(BlockDriverState *bs)
     g_free(s->device);
 }
 
-static int nvme_file_open(BlockDriverState *bs, QDict *options, int flags,
-                          Error **errp)
+static int nvme_open(BlockDriverState *bs, QDict *options, int flags,
+                     Error **errp)
 {
     const char *device;
     QemuOpts *opts;
@@ -978,7 +1012,7 @@ fail:
     return ret;
 }
 
-static int64_t nvme_getlength(BlockDriverState *bs)
+static int64_t coroutine_fn nvme_co_getlength(BlockDriverState *bs)
 {
     BDRVNVMeState *s = bs->opaque;
     return s->nsze << s->blkshift;
@@ -1033,7 +1067,7 @@ static coroutine_fn int nvme_cmd_map_qiov(BlockDriverState *bs, NvmeCmd *cmd,
         bool retry = true;
         uint64_t iova;
         size_t len = QEMU_ALIGN_UP(qiov->iov[i].iov_len,
-                                   qemu_real_host_page_size);
+                                   qemu_real_host_page_size());
 try_map:
         r = qemu_vfio_dma_map(s->vfio,
                               qiov->iov[i].iov_base,
@@ -1209,8 +1243,8 @@ static inline bool nvme_qiov_aligned(BlockDriverState *bs,
 
     for (i = 0; i < qiov->niov; ++i) {
         if (!QEMU_PTR_IS_ALIGNED(qiov->iov[i].iov_base,
-                                 qemu_real_host_page_size) ||
-            !QEMU_IS_ALIGNED(qiov->iov[i].iov_len, qemu_real_host_page_size)) {
+                                 qemu_real_host_page_size()) ||
+            !QEMU_IS_ALIGNED(qiov->iov[i].iov_len, qemu_real_host_page_size())) {
             trace_nvme_qiov_unaligned(qiov, i, qiov->iov[i].iov_base,
                                       qiov->iov[i].iov_len, s->page_size);
             return false;
@@ -1219,14 +1253,16 @@ static inline bool nvme_qiov_aligned(BlockDriverState *bs,
     return true;
 }
 
-static int nvme_co_prw(BlockDriverState *bs, uint64_t offset, uint64_t bytes,
-                       QEMUIOVector *qiov, bool is_write, int flags)
+static coroutine_fn int nvme_co_prw(BlockDriverState *bs,
+                                    uint64_t offset, uint64_t bytes,
+                                    QEMUIOVector *qiov, bool is_write,
+                                    int flags)
 {
     BDRVNVMeState *s = bs->opaque;
     int r;
     QEMU_AUTO_VFREE uint8_t *buf = NULL;
     QEMUIOVector local_qiov;
-    size_t len = QEMU_ALIGN_UP(bytes, qemu_real_host_page_size);
+    size_t len = QEMU_ALIGN_UP(bytes, qemu_real_host_page_size());
     assert(QEMU_IS_ALIGNED(offset, s->page_size));
     assert(QEMU_IS_ALIGNED(bytes, s->page_size));
     assert(bytes <= s->max_transfer);
@@ -1236,7 +1272,7 @@ static int nvme_co_prw(BlockDriverState *bs, uint64_t offset, uint64_t bytes,
     }
     s->stats.unaligned_accesses++;
     trace_nvme_prw_buffered(s, offset, bytes, qiov->niov, is_write);
-    buf = qemu_try_memalign(qemu_real_host_page_size, len);
+    buf = qemu_try_memalign(qemu_real_host_page_size(), len);
 
     if (!buf) {
         return -ENOMEM;
@@ -1460,7 +1496,7 @@ static int coroutine_fn nvme_co_truncate(BlockDriverState *bs, int64_t offset,
         return -ENOTSUP;
     }
 
-    cur_length = nvme_getlength(bs);
+    cur_length = nvme_co_getlength(bs);
     if (offset != cur_length && exact) {
         error_setg(errp, "Cannot resize NVMe devices");
         return -ENOTSUP;
@@ -1520,7 +1556,7 @@ static void nvme_detach_aio_context(BlockDriverState *bs)
 
     aio_set_event_notifier(bdrv_get_aio_context(bs),
                            &s->irq_notifier[MSIX_SHARED_IRQ_IDX],
-                           false, NULL, NULL);
+                           NULL, NULL, NULL);
 }
 
 static void nvme_attach_aio_context(BlockDriverState *bs,
@@ -1530,7 +1566,8 @@ static void nvme_attach_aio_context(BlockDriverState *bs,
 
     s->aio_context = new_context;
     aio_set_event_notifier(new_context, &s->irq_notifier[MSIX_SHARED_IRQ_IDX],
-                           false, nvme_handle_event, nvme_poll_cb);
+                           nvme_handle_event, nvme_poll_cb,
+                           nvme_poll_ready);
 
     for (unsigned i = 0; i < s->queue_count; i++) {
         NVMeQueuePair *q = s->queues[i];
@@ -1540,43 +1577,22 @@ static void nvme_attach_aio_context(BlockDriverState *bs,
     }
 }
 
-static void nvme_aio_plug(BlockDriverState *bs)
-{
-    BDRVNVMeState *s = bs->opaque;
-    assert(!s->plugged);
-    s->plugged = true;
-}
-
-static void nvme_aio_unplug(BlockDriverState *bs)
-{
-    BDRVNVMeState *s = bs->opaque;
-    assert(s->plugged);
-    s->plugged = false;
-    for (unsigned i = INDEX_IO(0); i < s->queue_count; i++) {
-        NVMeQueuePair *q = s->queues[i];
-        qemu_mutex_lock(&q->lock);
-        nvme_kick(q);
-        nvme_process_completion(q);
-        qemu_mutex_unlock(&q->lock);
-    }
-}
-
-static void nvme_register_buf(BlockDriverState *bs, void *host, size_t size)
+static bool nvme_register_buf(BlockDriverState *bs, void *host, size_t size,
+                              Error **errp)
 {
     int ret;
-    Error *local_err = NULL;
     BDRVNVMeState *s = bs->opaque;
 
-    ret = qemu_vfio_dma_map(s->vfio, host, size, false, NULL, &local_err);
-    if (ret) {
-        /* FIXME: we may run out of IOVA addresses after repeated
-         * bdrv_register_buf/bdrv_unregister_buf, because nvme_vfio_dma_unmap
-         * doesn't reclaim addresses for fixed mappings. */
-        error_reportf_err(local_err, "nvme_register_buf failed: ");
-    }
+    /*
+     * FIXME: we may run out of IOVA addresses after repeated
+     * bdrv_register_buf/bdrv_unregister_buf, because nvme_vfio_dma_unmap
+     * doesn't reclaim addresses for fixed mappings.
+     */
+    ret = qemu_vfio_dma_map(s->vfio, host, size, false, NULL, errp);
+    return ret == 0;
 }
 
-static void nvme_unregister_buf(BlockDriverState *bs, void *host)
+static void nvme_unregister_buf(BlockDriverState *bs, void *host, size_t size)
 {
     BDRVNVMeState *s = bs->opaque;
 
@@ -1614,9 +1630,9 @@ static BlockDriver bdrv_nvme = {
     .create_opts              = &bdrv_create_opts_simple,
 
     .bdrv_parse_filename      = nvme_parse_filename,
-    .bdrv_file_open           = nvme_file_open,
+    .bdrv_open                = nvme_open,
     .bdrv_close               = nvme_close,
-    .bdrv_getlength           = nvme_getlength,
+    .bdrv_co_getlength        = nvme_co_getlength,
     .bdrv_probe_blocksizes    = nvme_probe_blocksizes,
     .bdrv_co_truncate         = nvme_co_truncate,
 
@@ -1636,9 +1652,6 @@ static BlockDriver bdrv_nvme = {
 
     .bdrv_detach_aio_context  = nvme_detach_aio_context,
     .bdrv_attach_aio_context  = nvme_attach_aio_context,
-
-    .bdrv_io_plug             = nvme_aio_plug,
-    .bdrv_io_unplug           = nvme_aio_unplug,
 
     .bdrv_register_buf        = nvme_register_buf,
     .bdrv_unregister_buf      = nvme_unregister_buf,
