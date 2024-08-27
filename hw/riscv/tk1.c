@@ -26,7 +26,9 @@
 #include "hw/ssi/ssi.h"
 #include "hw/riscv/boot.h"
 #include "qemu/units.h"
+#include "sysemu/reset.h"
 #include "sysemu/sysemu.h"
+#include "sysemu/runstate.h"
 #include "hw/riscv/tillitis_cpu.h"
 #include "hw/char/riscv_htif.h"
 #include "qapi/qmp/qerror.h"
@@ -99,6 +101,7 @@ static int tk1_fifo_be_change(void *opaque)
 static void tk1_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 {
     TK1State *s = opaque;
+    TK1MachineClass *tmc = TK1_MACHINE_GET_CLASS(s);
     uint8_t c = val;
     const char *badmsg = "";
 
@@ -247,6 +250,12 @@ static void tk1_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned siz
         break;
     case TK1_MMIO_TK1_CPU_MON_LAST:
         badmsg = "unimplemented: write to CPU_MON_LAST";
+        break;
+    case TK1_MMIO_TK1_SYSTEM_RESET:
+        if (tmc->has_system_reset) {
+            qemu_system_reset_request(SHUTDOWN_CAUSE_GUEST_RESET);
+            return;
+        }
         break;
     }
 
@@ -428,23 +437,16 @@ static void tk1_timer_tick(void *opaque)
     }
 }
 
-static void tk1_board_init(MachineState *machine)
+static void tk1_reset(MachineState *machine, ShutdownCause reason)
 {
-    MachineClass *mc = MACHINE_GET_CLASS(machine);
-    TK1MachineClass *tmc = TK1_MACHINE_CLASS(mc);
     TK1State *s = TK1_MACHINE(machine);
-    const MemMapEntry *memmap = tk1_memmap;
-    MemoryRegion *sys_mem = get_system_memory();
-    Error *err = NULL;
 
-    // The TK1 timer. Every tick we call tk1_timer_tick().
     s->timer_initial = 0;
     s->timer = 0;
     s->timer_prescaler = 0;
     s->timer_running = false;
     // Default interval is ~18 MHz, ~55 ns
     s->timer_interval = NANOSECONDS_PER_SECOND / TK1_CLOCK_FREQ;
-    s->qtimer = timer_new_ns(QEMU_CLOCK_VIRTUAL, tk1_timer_tick, s);
 
     // Unique Device Secret
     uint32_t uds[8] = {
@@ -468,6 +470,33 @@ static void tk1_board_init(MachineState *machine)
         0x04050607
     };
     memcpy(s->udi, udi, 8);
+
+    for (int i = 0; i < 32; i ++) {
+        s->cdi[i] = 0;
+    }
+
+    s->app_mode = false;
+    s->app_size = 0;
+    s->app_addr = 0;
+
+    s->blake2s = 0;
+
+    s->led = 0;
+
+    qemu_devices_reset(reason);
+}
+
+static void tk1_board_init(MachineState *machine)
+{
+    MachineClass *mc = MACHINE_GET_CLASS(machine);
+    TK1MachineClass *tmc = TK1_MACHINE_CLASS(mc);
+    TK1State *s = TK1_MACHINE(machine);
+    const MemMapEntry *memmap = tk1_memmap;
+    MemoryRegion *sys_mem = get_system_memory();
+    Error *err = NULL;
+
+    // The TK1 timer. Every tick we call tk1_timer_tick().
+    s->qtimer = timer_new_ns(QEMU_CLOCK_VIRTUAL, tk1_timer_tick, s);
 
     if (!tk1_setup_chardev(s, &err)) {
         error_report_err(err);
@@ -593,11 +622,13 @@ static void tk1_machine_class_init(ObjectClass *oc, void *data)
 
     mc->desc = "Tillitis TK1 Bellatrix Board";
     mc->init = tk1_board_init;
+    mc->reset = tk1_reset;
     mc->max_cpus = 1;
     mc->default_cpu_type = TILLITIS_PICORV32_CPU;
     mc->default_ram_id = "riscv.tk1.ram";
     mc->default_ram_size = tk1_memmap[TK1_RAM].size;
     tmc->has_flash_access = false;
+    tmc->has_system_reset = false;
 
     object_class_property_add_str(oc, "fifo",
                                   tk1_machine_get_chardev,
@@ -615,6 +646,7 @@ static void tk1_castor_machine_class_init(ObjectClass *oc, void *data)
 
     mc->desc = "Tillitis TK1 Castor Board";
     tmc->has_flash_access = true;
+    tmc->has_system_reset = true;
 }
 
 static const TypeInfo tk1_machine_types[] = {

@@ -71,6 +71,7 @@ struct TK1MachineClass {
     MachineClass parent_obj;
     /*< public >*/
     bool has_flash_access;
+    bool has_system_reset;
 };
 
 #define TYPE_TK1_MACHINE MACHINE_TYPE_NAME("tk1")
