@@ -1,7 +1,7 @@
 /*
  * Tillitis TKey Memory Map
  *
- * Copyright (c) 2022-2024 Tillitis AB
+ * Copyright (c) 2022, 2023, 2024 Tillitis AB
  * SPDX-License-Identifier: GPL-2.0-or-later
  *
  * Note that this file is also included in at least qemu
@@ -136,9 +136,17 @@
 // Deprecated - use _ADDR_RAND instead
 #define TK1_MMIO_TK1_RAM_ASLR 0xff000100
 #define TK1_MMIO_TK1_RAM_ADDR_RAND 0xff000100
+// Deprecated - use _DATA_RAND instead
 #define TK1_MMIO_TK1_RAM_SCRAMBLE 0xff000104
+#define TK1_MMIO_TK1_RAM_DATA_RAND 0xff000104
 
 #define TK1_MMIO_TK1_CPU_MON_CTRL 0xff000180
 #define TK1_MMIO_TK1_CPU_MON_FIRST 0xff000184
 #define TK1_MMIO_TK1_CPU_MON_LAST 0xff000188
+
+#define TK1_MMIO_TK1_SYSTEM_RESET 0xff0001C0
+
+#define TK1_MMIO_TK1_SPI_EN 0xff000200
+#define TK1_MMIO_TK1_SPI_XFER 0xff000204
+#define TK1_MMIO_TK1_SPI_DATA 0xff000208
 #endif

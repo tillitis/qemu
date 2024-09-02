@@ -23,12 +23,14 @@
 #include "hw/riscv/riscv_hart.h"
 #include "qom/object.h"
 #include "chardev/char-fe.h"
+#include "hw/ssi/tk1_spi.h"
 
 #include "hw/riscv/tk1_mem.h"
 
 // 18 MHz
 #define TK1_CLOCK_FREQ 18000000
 #define TK1_RX_FIFO_SIZE 16
+#define TK1_SPI_BASE TK1_MMIO_TK1_SPI_EN
 
 typedef struct TK1State {
     /*< private >*/
@@ -61,6 +63,7 @@ typedef struct TK1State {
     uint32_t timer_prescaler;
     bool timer_running;
     uint32_t timer_interval;
+    TK1SPIState spi;
 } TK1State;
 
 #define TYPE_TK1_MACHINE MACHINE_TYPE_NAME("tk1")
@@ -71,6 +74,7 @@ enum {
     TK1_ROM,
     TK1_RAM,
     TK1_MMIO,
+    TK1_SPI,
 };
 
 #endif

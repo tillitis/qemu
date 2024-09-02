@@ -23,6 +23,7 @@
 #include "qemu/error-report.h"
 #include "hw/boards.h"
 #include "hw/misc/unimp.h"
+#include "hw/ssi/ssi.h"
 #include "hw/riscv/boot.h"
 #include "qemu/units.h"
 #include "sysemu/sysemu.h"
@@ -38,6 +39,7 @@ static const MemMapEntry tk1_memmap[] = {
     [TK1_ROM]  = { TK1_ROM_BASE,  0x20000 /*128KB*/ },
     [TK1_RAM]  = { TK1_RAM_BASE,  TK1_RAM_SIZE },
     [TK1_MMIO] = { TK1_MMIO_BASE, TK1_MMIO_SIZE },
+    [TK1_SPI]  = { TK1_SPI_BASE, TK1_SPI_SIZE },
 };
 
 static bool tk1_setup_chardev(TK1State *s, Error **errp)
@@ -502,6 +504,29 @@ static void tk1_board_init(MachineState *machine)
                           memmap[TK1_MMIO].size);
     memory_region_add_subregion(sys_mem, memmap[TK1_MMIO].base, &s->mmio);
     // sysbus_init_mmio(sbd, &s->mmio); // XXX add to sysbusdevice?
+
+
+    // Add the SPI bus
+    object_initialize_child(OBJECT(machine), "spi", &s->spi, TYPE_TK1_SPI);
+    sysbus_realize(SYS_BUS_DEVICE(&s->spi), &error_abort);
+    sysbus_mmio_map(SYS_BUS_DEVICE(&s->spi), 0,
+                    memmap[TK1_SPI].base);
+
+    // Create and connect the flash memory to the SPI bus
+    DeviceState *flash_dev;
+    DriveInfo *dinfo;
+    qemu_irq flash_cs;
+
+    flash_dev = qdev_new("w25q80bl");
+    dinfo = drive_get(IF_MTD, 0, 0);
+    if (dinfo) {
+        qdev_prop_set_drive_err(flash_dev, "drive",
+                                blk_by_legacy_dinfo(dinfo),
+                                &error_fatal);
+    }
+    qdev_realize_and_unref(flash_dev, BUS(s->spi.spi), &error_fatal);
+    flash_cs = qdev_get_gpio_in_named(flash_dev, SSI_GPIO_CS, 0);
+    sysbus_connect_irq(SYS_BUS_DEVICE(&s->spi), 1, flash_cs);
 
     if (!machine->firmware) {
         error_report("No firmware provided! Please use the -bios option.");
