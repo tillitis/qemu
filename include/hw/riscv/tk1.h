@@ -66,9 +66,15 @@ typedef struct TK1State {
     TK1SPIState spi;
 } TK1State;
 
+struct TK1MachineClass {
+    /*< private >*/
+    MachineClass parent_obj;
+    /*< public >*/
+    bool has_flash_access;
+};
+
 #define TYPE_TK1_MACHINE MACHINE_TYPE_NAME("tk1")
-#define TK1_MACHINE(obj) \
-    OBJECT_CHECK(TK1State, (obj), TYPE_TK1_MACHINE)
+OBJECT_DECLARE_TYPE(TK1State, TK1MachineClass, TK1_MACHINE)
 
 enum {
     TK1_ROM,

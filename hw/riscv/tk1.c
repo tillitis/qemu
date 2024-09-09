@@ -431,6 +431,7 @@ static void tk1_timer_tick(void *opaque)
 static void tk1_board_init(MachineState *machine)
 {
     MachineClass *mc = MACHINE_GET_CLASS(machine);
+    TK1MachineClass *tmc = TK1_MACHINE_CLASS(mc);
     TK1State *s = TK1_MACHINE(machine);
     const MemMapEntry *memmap = tk1_memmap;
     MemoryRegion *sys_mem = get_system_memory();
@@ -505,28 +506,29 @@ static void tk1_board_init(MachineState *machine)
     memory_region_add_subregion(sys_mem, memmap[TK1_MMIO].base, &s->mmio);
     // sysbus_init_mmio(sbd, &s->mmio); // XXX add to sysbusdevice?
 
+    if (tmc->has_flash_access) {
+        // Add the SPI bus
+        object_initialize_child(OBJECT(machine), "spi", &s->spi, TYPE_TK1_SPI);
+        sysbus_realize(SYS_BUS_DEVICE(&s->spi), &error_abort);
+        sysbus_mmio_map(SYS_BUS_DEVICE(&s->spi), 0,
+                        memmap[TK1_SPI].base);
 
-    // Add the SPI bus
-    object_initialize_child(OBJECT(machine), "spi", &s->spi, TYPE_TK1_SPI);
-    sysbus_realize(SYS_BUS_DEVICE(&s->spi), &error_abort);
-    sysbus_mmio_map(SYS_BUS_DEVICE(&s->spi), 0,
-                    memmap[TK1_SPI].base);
+        // Create and connect the flash memory to the SPI bus
+        DeviceState *flash_dev;
+        DriveInfo *dinfo;
+        qemu_irq flash_cs;
 
-    // Create and connect the flash memory to the SPI bus
-    DeviceState *flash_dev;
-    DriveInfo *dinfo;
-    qemu_irq flash_cs;
-
-    flash_dev = qdev_new("w25q80bl");
-    dinfo = drive_get(IF_MTD, 0, 0);
-    if (dinfo) {
-        qdev_prop_set_drive_err(flash_dev, "drive",
-                                blk_by_legacy_dinfo(dinfo),
-                                &error_fatal);
+        flash_dev = qdev_new("w25q80bl");
+        dinfo = drive_get(IF_MTD, 0, 0);
+        if (dinfo) {
+            qdev_prop_set_drive_err(flash_dev, "drive",
+                                    blk_by_legacy_dinfo(dinfo),
+                                    &error_fatal);
+        }
+        qdev_realize_and_unref(flash_dev, BUS(s->spi.spi), &error_fatal);
+        flash_cs = qdev_get_gpio_in_named(flash_dev, SSI_GPIO_CS, 0);
+        sysbus_connect_irq(SYS_BUS_DEVICE(&s->spi), 1, flash_cs);
     }
-    qdev_realize_and_unref(flash_dev, BUS(s->spi.spi), &error_fatal);
-    flash_cs = qdev_get_gpio_in_named(flash_dev, SSI_GPIO_CS, 0);
-    sysbus_connect_irq(SYS_BUS_DEVICE(&s->spi), 1, flash_cs);
 
     if (!machine->firmware) {
         error_report("No firmware provided! Please use the -bios option.");
@@ -587,13 +589,15 @@ static void tk1_machine_instance_finalize(Object *obj)
 static void tk1_machine_class_init(ObjectClass *oc, void *data)
 {
     MachineClass *mc = MACHINE_CLASS(oc);
+    TK1MachineClass *tmc = TK1_MACHINE_CLASS(mc);
 
-    mc->desc = "Tillitis TK1 Board";
+    mc->desc = "Tillitis TK1 Bellatrix Board";
     mc->init = tk1_board_init;
     mc->max_cpus = 1;
     mc->default_cpu_type = TILLITIS_PICORV32_CPU;
     mc->default_ram_id = "riscv.tk1.ram";
     mc->default_ram_size = tk1_memmap[TK1_RAM].size;
+    tmc->has_flash_access = false;
 
     object_class_property_add_str(oc, "fifo",
                                   tk1_machine_get_chardev,
@@ -604,18 +608,29 @@ static void tk1_machine_class_init(ObjectClass *oc, void *data)
                                    tk1_machine_set_htif_enabled);
 }
 
-static const TypeInfo tk1_machine_typeinfo = {
-    .name       = TYPE_TK1_MACHINE,
-    .parent     = TYPE_MACHINE,
-    .class_init = tk1_machine_class_init,
-    .instance_init = tk1_machine_instance_init,
-    .instance_size = sizeof(TK1State),
-    .instance_finalize = tk1_machine_instance_finalize,
-};
-
-static void tk1_machine_init_register_types(void)
+static void tk1_castor_machine_class_init(ObjectClass *oc, void *data)
 {
-    type_register_static(&tk1_machine_typeinfo);
+    MachineClass *mc = MACHINE_CLASS(oc);
+    TK1MachineClass *tmc = TK1_MACHINE_CLASS(mc);
+
+    mc->desc = "Tillitis TK1 Castor Board";
+    tmc->has_flash_access = true;
 }
 
-type_init(tk1_machine_init_register_types)
+static const TypeInfo tk1_machine_types[] = {
+    {
+        .name       = MACHINE_TYPE_NAME("tk1-castor"),
+        .parent     = TYPE_TK1_MACHINE,
+        .class_init = tk1_castor_machine_class_init,
+    }, {
+        .name       = TYPE_TK1_MACHINE,
+        .parent     = TYPE_MACHINE,
+        .class_init = tk1_machine_class_init,
+        .class_size = sizeof(TK1MachineClass),
+        .instance_init = tk1_machine_instance_init,
+        .instance_size = sizeof(TK1State),
+        .instance_finalize = tk1_machine_instance_finalize,
+    }
+};
+
+DEFINE_TYPES(tk1_machine_types)
