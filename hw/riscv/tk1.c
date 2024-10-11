@@ -236,11 +236,11 @@ static void tk1_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned siz
         }
 
         return;
-    case TK1_MMIO_TK1_RAM_ASLR:
-        badmsg = "unimplemented: write to RAM_ASLR";
+    case TK1_MMIO_TK1_RAM_ADDR_RAND:
+        badmsg = "unimplemented: write to RAM_ADDR_RAND";
         break;
-    case TK1_MMIO_TK1_RAM_SCRAMBLE:
-        badmsg = "unimplemented: write to RAM_SCRAMBLE";
+    case TK1_MMIO_TK1_RAM_DATA_RAND:
+        badmsg = "unimplemented: write to RAM_DATA_RAND";
         break;
     case TK1_MMIO_TK1_CPU_MON_CTRL:
         badmsg = "unimplemented: write to CPU_MON_CTRL";
