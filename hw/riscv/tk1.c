@@ -171,7 +171,7 @@ static void tk1_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned siz
             badmsg = "write to SWITCH_APP in app-mode";
             break;
         }
-        s->app_mode = true;
+        /*s->app_mode = true;*/
         return;
     case TK1_MMIO_TK1_LED:
         s->led = val;
