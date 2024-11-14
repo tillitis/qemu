@@ -198,6 +198,9 @@ static void tk1_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned siz
     case TK1_MMIO_TK1_BLAKE2S:
         s->blake2s = val;
         return;
+    case TK1_MMIO_TK1_SYSCALL:
+        s->syscall_addr = val;
+        return;
     case TK1_MMIO_TIMER_TIMER:
         if (s->timer_running) {
             badmsg = "write to TIMER_TIMER while timer running does nothing";
@@ -399,6 +402,8 @@ static uint64_t tk1_mmio_read(void *opaque, hwaddr addr, unsigned size)
         return s->app_size;
     case TK1_MMIO_TK1_BLAKE2S:
         return s->blake2s;
+    case TK1_MMIO_TK1_SYSCALL:
+        return s->syscall_addr;
     }
 
 bad:
@@ -480,6 +485,7 @@ static void tk1_reset(MachineState *machine, ShutdownCause reason)
     s->app_addr = 0;
 
     s->blake2s = 0;
+    s->syscall_addr = 0;
 
     s->led = 0;
 
