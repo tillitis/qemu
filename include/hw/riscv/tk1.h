@@ -56,6 +56,7 @@ typedef struct TK1State {
     uint32_t led;
     uint32_t blake2s;
     uint32_t syscall_addr;
+    bool syscall_addr_locked;
     uint8_t cdi[32];
     uint32_t udi[2]; // 8 bytes
     uint8_t fw_ram[TK1_MMIO_FW_RAM_SIZE];

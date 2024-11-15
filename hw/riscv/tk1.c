@@ -199,7 +199,10 @@ static void tk1_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned siz
         s->blake2s = val;
         return;
     case TK1_MMIO_TK1_SYSCALL:
-        s->syscall_addr = val;
+        if (!s->syscall_addr_locked) {
+            s->syscall_addr = val;
+            s->syscall_addr_locked = true;
+        }
         return;
     case TK1_MMIO_TIMER_TIMER:
         if (s->timer_running) {
@@ -486,6 +489,7 @@ static void tk1_reset(MachineState *machine, ShutdownCause reason)
 
     s->blake2s = 0;
     s->syscall_addr = 0;
+    s->syscall_addr_locked = false;
 
     s->led = 0;
 
