@@ -115,7 +115,7 @@ static void tk1_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned siz
 
     // Byte addressable
     if (addr >= TK1_MMIO_FW_RAM_BASE
-        && (addr + size) <= (TK1_MMIO_FW_RAM_BASE + TK1_MMIO_FW_RAM_SIZE)) {
+        && (addr + size) <= (TK1_MMIO_FW_RAM_BASE + tmc->fw_ram_size)) {
         if (s->app_mode) {
             badmsg = "write to FW_RAM in app-mode";
             goto bad;
@@ -267,6 +267,7 @@ bad:
 static uint64_t tk1_mmio_read(void *opaque, hwaddr addr, unsigned size)
 {
     TK1State *s = opaque;
+    TK1MachineClass *tmc = TK1_MACHINE_GET_CLASS(s);
     uint8_t r;
     const char *badmsg = "";
 
@@ -275,7 +276,7 @@ static uint64_t tk1_mmio_read(void *opaque, hwaddr addr, unsigned size)
 
     // Byte addressable
     if (addr >= TK1_MMIO_FW_RAM_BASE
-        && (addr + size) <= (TK1_MMIO_FW_RAM_BASE + TK1_MMIO_FW_RAM_SIZE)) {
+        && (addr + size) <= (TK1_MMIO_FW_RAM_BASE + tmc->fw_ram_size)) {
         if (s->app_mode) {
             badmsg = "read from FW_RAM in app-mode";
             goto bad;
@@ -629,6 +630,7 @@ static void tk1_machine_class_init(ObjectClass *oc, void *data)
     mc->default_ram_size = tk1_memmap[TK1_RAM].size;
     tmc->has_flash_access = false;
     tmc->has_system_reset = false;
+    tmc->fw_ram_size = TK1_BELLATRIX_FW_RAM_SIZE;
 
     object_class_property_add_str(oc, "fifo",
                                   tk1_machine_get_chardev,
@@ -647,6 +649,7 @@ static void tk1_castor_machine_class_init(ObjectClass *oc, void *data)
     mc->desc = "Tillitis TK1 Castor Board";
     tmc->has_flash_access = true;
     tmc->has_system_reset = true;
+    tmc->fw_ram_size = TK1_CASTOR_FW_RAM_SIZE;
 }
 
 static const TypeInfo tk1_machine_types[] = {
