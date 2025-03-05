@@ -31,6 +31,8 @@
 #define TK1_CLOCK_FREQ 18000000
 #define TK1_RX_FIFO_SIZE 16
 #define TK1_SPI_BASE TK1_MMIO_TK1_SPI_EN
+#define TK1_BELLATRIX_FW_RAM_SIZE 0x800
+#define TK1_CASTOR_FW_RAM_SIZE 0x1000
 
 typedef struct TK1State {
     /*< private >*/
@@ -57,7 +59,7 @@ typedef struct TK1State {
     uint32_t blake2s;
     uint8_t cdi[32];
     uint32_t udi[2]; // 8 bytes
-    uint8_t fw_ram[TK1_MMIO_FW_RAM_SIZE];
+    uint8_t fw_ram[TK1_CASTOR_FW_RAM_SIZE];
     uint32_t timer_initial;
     uint32_t timer;
     uint32_t timer_prescaler;
@@ -72,6 +74,7 @@ struct TK1MachineClass {
     /*< public >*/
     bool has_flash_access;
     bool has_system_reset;
+    uint32_t fw_ram_size;
 };
 
 #define TYPE_TK1_MACHINE MACHINE_TYPE_NAME("tk1")
