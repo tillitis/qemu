@@ -102,6 +102,7 @@ static void tk1_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned siz
 {
     TK1State *s = opaque;
     TK1MachineClass *tmc = TK1_MACHINE_GET_CLASS(s);
+    CPURISCVState *env = &s->cpus.harts[0].env;
     uint8_t c = val;
     const char *badmsg = "";
 
@@ -111,6 +112,28 @@ static void tk1_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned siz
     if (addr == TK1_MMIO_QEMU_DEBUG) {
         putchar(c);
         return;
+    }
+
+    if (tmc->has_syscall) {
+        if (addr == TK1_MMIO_SYSCALL) {
+            // TKey implements system calls using the non-standard interrupts
+            // provided by the PicoRV32 processor. Lacking a better option we
+            // modify the cpu registers here directly.
+            //
+            // Return address is stored in x3.
+            // IRQ flags are stored in x4.
+
+            // Assume the current address is 32-bit and store next pc in x3.
+            env->gpr[3] = env->pc + 4;
+            env->gpr[4] = TK1_SYSCALL_IRQ_MASK;
+            // Jump to interrupt handle by updating pc from under the feet of
+            // the CPU. Qemu probably does something like 'pc +=
+            // current_instruction_length' later so we take our interrupt
+            // handler address and subtract 4.
+            // This could probably be handled by adding an interrupt controller.
+            env->pc = TK1_IRQ_HANDLER_ADDRESS - 4;
+            return;
+        }
     }
 
     // Byte addressable
@@ -629,6 +652,7 @@ static void tk1_machine_class_init(ObjectClass *oc, void *data)
     mc->default_ram_id = "riscv.tk1.ram";
     mc->default_ram_size = tk1_memmap[TK1_RAM].size;
     tmc->has_flash_access = false;
+    tmc->has_syscall = false;
     tmc->has_system_reset = false;
     tmc->fw_ram_size = TK1_BELLATRIX_FW_RAM_SIZE;
 
@@ -648,6 +672,7 @@ static void tk1_castor_machine_class_init(ObjectClass *oc, void *data)
 
     mc->desc = "Tillitis TK1 Castor Board";
     tmc->has_flash_access = true;
+    tmc->has_syscall = true;
     tmc->has_system_reset = true;
     tmc->fw_ram_size = TK1_CASTOR_FW_RAM_SIZE;
 }

@@ -33,6 +33,9 @@
 #define TK1_SPI_BASE TK1_MMIO_TK1_SPI_EN
 #define TK1_BELLATRIX_FW_RAM_SIZE 0x800
 #define TK1_CASTOR_FW_RAM_SIZE 0x1000
+#define TK1_IRQ_HANDLER_ADDRESS 0x10
+#define TK1_SYSCALL_IRQ_MASK (1 << 31)
+#define TK1_MMIO_SYSCALL 0xe1000000
 
 typedef struct TK1State {
     /*< private >*/
@@ -73,6 +76,7 @@ struct TK1MachineClass {
     MachineClass parent_obj;
     /*< public >*/
     bool has_flash_access;
+    bool has_syscall;
     bool has_system_reset;
     uint32_t fw_ram_size;
 };
