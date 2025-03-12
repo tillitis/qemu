@@ -73,6 +73,7 @@ struct TK1MachineClass {
     MachineClass parent_obj;
     /*< public >*/
     bool has_flash_access;
+    bool has_syscall;
     bool has_system_reset;
     uint32_t fw_ram_size;
 };

@@ -35,6 +35,9 @@
 #include "qemu/log.h"
 #include "qemu/guest-random.h"
 
+#define TK1_CASTOR_IRQ_HANDLER_ADDRESS 0x10
+#define TK1_CASTOR_SYSCALL_IRQ_MASK (1 << 31)
+
 static const MemMapEntry tk1_memmap[] = {
     // TODO js said that currently ROM size is 2048 W32, and max is 3072 W32
     // (8192 and 12288 bytes resp right).
@@ -102,6 +105,8 @@ static void tk1_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned siz
 {
     TK1State *s = opaque;
     TK1MachineClass *tmc = TK1_MACHINE_GET_CLASS(s);
+    CPURISCVState *env = &s->cpus.harts[0].env;
+
     uint8_t c = val;
     const char *badmsg = "";
 
@@ -111,6 +116,20 @@ static void tk1_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned siz
     if (addr == TK1_MMIO_QEMU_DEBUG) {
         putchar(c);
         return;
+    }
+
+    if (tmc->has_syscall) {
+        if (addr == 0xe1000000) {
+            qemu_log_mask(LOG_GUEST_ERROR, "%s: Syscall: %d, arg1: %d, arg2: %d, arg3: %d\n", __func__,
+                    env->gpr[10],
+                    env->gpr[11],
+                    env->gpr[12],
+                    env->gpr[13]);
+            env->gpr[3] = env->pc + 4; // Add length of current instruction pc and store it in the picorv32 return address register (x3). We assume the instruction is 4 byte long.
+            env->gpr[4] = TK1_CASTOR_SYSCALL_IRQ_MASK; // Set interrupt source in the picorv32 interrupt source register (x4)
+            env->pc = TK1_CASTOR_IRQ_HANDLER_ADDRESS - 4; // We have to take our interrupt handler address and subtract 4. Qemu probably does something like 'pc += current_instruction_length' later.
+            return;
+        }
     }
 
     // Byte addressable
@@ -629,6 +648,7 @@ static void tk1_machine_class_init(ObjectClass *oc, void *data)
     mc->default_ram_id = "riscv.tk1.ram";
     mc->default_ram_size = tk1_memmap[TK1_RAM].size;
     tmc->has_flash_access = false;
+    tmc->has_syscall = false;
     tmc->has_system_reset = false;
     tmc->fw_ram_size = TK1_BELLATRIX_FW_RAM_SIZE;
 
@@ -648,6 +668,7 @@ static void tk1_castor_machine_class_init(ObjectClass *oc, void *data)
 
     mc->desc = "Tillitis TK1 Castor Board";
     tmc->has_flash_access = true;
+    tmc->has_syscall = true;
     tmc->has_system_reset = true;
     tmc->fw_ram_size = TK1_CASTOR_FW_RAM_SIZE;
 }
