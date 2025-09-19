@@ -409,7 +409,7 @@ static uint64_t tk1_mmio_read(void *opaque, hwaddr addr, unsigned size)
     case TK1_MMIO_TK1_NAME1:
         return 0x6d6b6466; // "mkdf"
     case TK1_MMIO_TK1_VERSION:
-        return 1;
+        return tmc->version;
     case TK1_MMIO_TK1_SWITCH_APP:
         if (s->app_mode) {
             return 0xffffffff;
@@ -655,6 +655,7 @@ static void tk1_machine_class_init(ObjectClass *oc, void *data)
     tmc->has_syscall = false;
     tmc->has_system_reset = false;
     tmc->fw_ram_size = TK1_BELLATRIX_FW_RAM_SIZE;
+    tmc->version = 1;
 
     object_class_property_add_str(oc, "fifo",
                                   tk1_machine_get_chardev,
@@ -675,6 +676,7 @@ static void tk1_castor_machine_class_init(ObjectClass *oc, void *data)
     tmc->has_syscall = true;
     tmc->has_system_reset = true;
     tmc->fw_ram_size = TK1_CASTOR_FW_RAM_SIZE;
+    tmc->version = 6;
 }
 
 static const TypeInfo tk1_machine_types[] = {

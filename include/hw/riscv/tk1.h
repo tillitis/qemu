@@ -79,6 +79,7 @@ struct TK1MachineClass {
     bool has_syscall;
     bool has_system_reset;
     uint32_t fw_ram_size;
+    uint32_t version;
 };
 
 #define TYPE_TK1_MACHINE MACHINE_TYPE_NAME("tk1")
