@@ -34,10 +34,6 @@ def create_pty(name):
     # Set slave PTY to raw mode (disables buffering, canonical mode, etc.)
     tty.setraw(slave)
 
-    # Set slave to non-blocking
-    flags = fcntl.fcntl(slave, fcntl.F_GETFL)
-    fcntl.fcntl(slave, fcntl.F_SETFL, flags | os.O_NONBLOCK)
-
     # Set master to non-blocking
     flags = fcntl.fcntl(master, fcntl.F_GETFL)
     fcntl.fcntl(master, fcntl.F_SETFL, flags | os.O_NONBLOCK)
