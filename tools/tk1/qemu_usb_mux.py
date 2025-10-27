@@ -43,13 +43,14 @@ def create_pty(name):
     fcntl.fcntl(master, fcntl.F_SETFL, flags | os.O_NONBLOCK)
 
     slave_name = os.ttyname(slave)
-    print(f"{name} PTY created at: {slave_name}")
     return master, slave_name
 
 def main():
     parser = argparse.ArgumentParser(description="Open PTY endpoints that adds framing for QEMU communication")
     parser.add_argument("pty_path", help="Path to the QEMU char device PTY (e.g., /dev/pts/X)")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output")
+    parser.add_argument("-s", "--symlink", help="Create symlinks to the new ptys", metavar="prefix")
+
     args = parser.parse_args()
 
     try:
@@ -63,6 +64,10 @@ def main():
     fd_to_frame = {}
     for name, code in FRAMES.items():
         fd, path = create_pty(name)
+        if args.verbose or not args.symlink:
+            print(f"{name} PTY created at: {path}")
+        if args.symlink:
+            os.symlink(path, f"{args.symlink}-{name}.pty")
         frame_fds[code] = fd
         fd_to_frame[fd] = code
 
@@ -135,4 +140,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
