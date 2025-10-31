@@ -54,6 +54,7 @@ def main():
 
     try:
         pty_fd = os.open(args.pty_path, os.O_RDWR | os.O_NONBLOCK)
+        tty.setraw(pty_fd)
     except Exception as e:
         print(f"Failed to open PTY {args.pty_path}: {e}")
         sys.exit(1)
