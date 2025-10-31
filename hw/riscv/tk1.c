@@ -589,11 +589,9 @@ static void tk1_board_init(MachineState *machine)
     }
 
     if (s->htif_enabled) {
-        printf("Enabling HTIF (for debug output from firmware, which must be built with -DQEMU_CONSOLE)\n");
         riscv_load_firmware(machine->firmware, memmap[TK1_ROM].base, htif_symbol_callback);
         htif_mm_init(sys_mem, serial_hd(0), 0, 0);
     } else {
-        printf("HTIF not enabled (no debug output from firmware)\n");
         riscv_load_firmware(machine->firmware, memmap[TK1_ROM].base, NULL);
     }
 }
