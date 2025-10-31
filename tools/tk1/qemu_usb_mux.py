@@ -100,7 +100,7 @@ def main():
                                     os.write(frame_fds[current_frame], recv_buffer)
                                     if args.verbose:
                                         frame_name = FRAME_CODES_TO_NAME.get(current_frame, f"0x{current_frame:02X}")
-                                        print(f"[MUX -> {frame_name}] (length: {len(recv_buffer)})")
+                                        print(f"[QEMU-> {frame_name}] (length: {len(recv_buffer)})")
                                         print(format_bytes_verbose(recv_buffer, prefix="  "))
                                 else:
                                     if current_frame == 0x04:
@@ -124,7 +124,7 @@ def main():
                         os.write(pty_fd, frame)
                         if args.verbose:
                             frame_name = FRAME_CODES_TO_NAME.get(frame_code, f"0x{frame_code:02X}")
-                            print(f"[{frame_name} -> MUX] (length: {len(data)})")
+                            print(f"[{frame_name} -> QEMU] (length: {len(data)})")
                             print(format_bytes_verbose(data, prefix="  "))
 
         except KeyboardInterrupt:
