@@ -134,8 +134,8 @@ def main():
                 if fd == udp_sock:
                     frame, addr = recv_framed_udp(fd)
                     if frame:
+                        dt = datetime.datetime.now()
                         if args.verbose:
-                            dt = datetime.datetime.now()
                             print(f"{dt} [UDP {addr} -> TKEY] (length: {len(frame)})")
                             print(format_bytes_verbose(frame, prefix="  "))
 
