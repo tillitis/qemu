@@ -457,7 +457,7 @@ static void tk1_timer_tick(void *opaque)
         return;
     }
     s->timer --;
-    if (s->timer == 0) {
+    if (s->timer <= 1) {
         // Timer expired
         s->timer_running = false;
     } else {
