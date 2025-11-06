@@ -550,10 +550,10 @@ static void tk1_board_init(MachineState *machine)
     }
 
     if (machine->ram_size != mc->default_ram_size) {
-        char *sz = size_to_str(mc->default_ram_size);
-        error_report("Invalid RAM size, should be %s.", sz);
-        g_free(sz);
-        exit(EXIT_FAILURE);
+        char *sz = size_to_str(machine->ram_size);
+        error_report("Default RAM size is overridden. Size %s.", sz);
+        // g_free(sz);
+        // exit(EXIT_FAILURE);
     }
 
     if (strcmp(machine->cpu_type, TYPE_RISCV_CPU_TILLITIS_PICORV32) != 0) {
