@@ -5,11 +5,22 @@ import datetime
 import hid
 import socket
 import os
+import queue
 import select
+import signal
 import sys
+import threading
+import time
 
 HID_PACKET_SIZE = 64
 FRAME_HEADER_SIZE = 2  # 1 byte type, 1 byte length
+
+# Queue for outgoing HID writes
+hid_write_queue = queue.Queue(maxsize=8)
+stop_event = threading.Event()
+
+def handle_sigint(signum, frame):
+    stop_event.set()
 
 def format_bytes_verbose(data, prefix=""):
     lines = []
@@ -21,27 +32,64 @@ def format_bytes_verbose(data, prefix=""):
 
 def read_hidraw(dev):
     hid_data = b''
-    while len(hid_data) < HID_PACKET_SIZE:
-        try:
-            chunk = dev.read(HID_PACKET_SIZE)
-            if chunk == b'':  # Nothing to read
-                return None
-        except BlockingIOError:
-            continue  # Non-blocking, no data
-        hid_data += chunk
+    chunk = dev.read(HID_PACKET_SIZE)
+    if chunk == b'': # catch if nothing is returned
+        return None
+    hid_data += chunk
 
     frame_type, length = hid_data[0], hid_data[1]
 
     while len(hid_data) < (length+FRAME_HEADER_SIZE):
-        try:
-            chunk = dev.read(HID_PACKET_SIZE)
-            if chunk == b'':  # Nothing to read
-                return None
-        except BlockingIOError:
-            continue  # Non-blocking, no data
+        chunk = dev.read(HID_PACKET_SIZE)
+        if chunk == b'':  # Try again with next frame
+            continue
         hid_data += chunk
 
     return hid_data[:(length+FRAME_HEADER_SIZE)] # Limit data to only valid bytes
+
+def hid_reader(hiddev, udp_sock, udp_dest, args):
+    while not stop_event.is_set():
+        try:
+            frame = read_hidraw(hiddev)
+            if not frame:
+                continue
+
+            udp_sock.sendto(frame, udp_dest)
+
+            if args.verbose:
+                dt = datetime.datetime.now()
+                print(f"{dt} [TKEY -> UDP {udp_dest}] (length: {len(frame)})")
+                print(format_bytes_verbose(frame, prefix="  "))
+
+        except (OSError, ValueError) as e:
+            print(f"HID reader exception: {e}")
+            break
+
+        except Exception as e:
+            if stop_event.is_set():
+                break
+            print(f"Error: HID reader: {e}")
+            stop_event.set() 
+
+def hid_writer(dev):
+    while not stop_event.is_set():
+        try:
+            chunk = hid_write_queue.get(timeout=0.1)
+        except queue.Empty:
+            continue
+
+        if chunk is None:
+            break
+
+        try:
+            dev.write(chunk)
+        except OSError as e:
+            print(f"HID write failed: {e}")
+            time.sleep(0.01)
+            continue
+
+        # HID write interval pacing
+        time.sleep(0.002)
 
 def recv_framed_udp(sock):
     try:
@@ -100,13 +148,13 @@ def main():
             binary_hid_path = dev['path']
             break
     else:
-        raise RuntimeError("Desired interface not found")
+        raise RuntimeError("HID [debug] interface not found")
 
     hid_path = binary_hid_path.decode('utf-8')
 
     # Open HID device
     hiddev = hid.Device(path=binary_hid_path)
-    hiddev.nonblocking = True
+    hiddev.nonblocking = False 
 
     # Setup UDP socket
     udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -115,57 +163,64 @@ def main():
 
     udp_dest = (args.dest_ip, args.dest_port)
 
-    print(f"Forwarding between {hid_path} <-> UDP {udp_dest}")
+    signal.signal(signal.SIGINT, handle_sigint)
 
-    while True:
+    # Start writer thread
+    threading.Thread(target=hid_writer, args=(hiddev,), daemon=True).start()
+    threading.Thread(target=hid_reader, args=(hiddev, udp_sock, udp_dest, args), daemon=True).start()
+
+    print(f"Forwarding between {hid_path} <-> UDP {udp_dest} ")
+    print(f"Use Ctrl+C to exit")
+
+    while not stop_event.is_set():
         try:
             r_ready, _, _ = select.select([udp_sock], [], [], 0.1)
 
-            frame = read_hidraw(hiddev)
-            if frame:
-                    udp_sock.sendto(frame, udp_dest)
-                    if args.verbose:
-                        dt = datetime.datetime.now()
-                        print(f"{dt} [TKEY -> UDP {udp_dest}] (length: {len(frame)})")
-                        print(format_bytes_verbose(frame, prefix="  "))
-
             for fd in r_ready:
-
                 if fd == udp_sock:
                     frame, addr = recv_framed_udp(fd)
-                    if frame:
-                        dt = datetime.datetime.now()
-                        if args.verbose:
-                            print(f"{dt} [UDP {addr} -> TKEY] (length: {len(frame)})")
-                            print(format_bytes_verbose(frame, prefix="  "))
+                    if not frame:
+                        continue
 
-                        while len(frame) > 0:
-                            # Take up to 64 bytes from the frame
-                            chunk = frame[:HID_PACKET_SIZE]
-                            frame = frame[HID_PACKET_SIZE:]
+                    dt = datetime.datetime.now()
+                    if args.verbose:
+                        print(f"{dt} [UDP {addr} -> TKEY] (length: {len(frame)})")
+                        print(format_bytes_verbose(frame, prefix="  "))
 
-                            # Ensure exactly 64 bytes by padding if necessary
-                            if len(chunk) < HID_PACKET_SIZE:
-                                chunk = chunk.ljust(HID_PACKET_SIZE, b'\x00')
+                    while len(frame) > 0:
+                        # Take up to 64 bytes from the frame
+                        chunk = frame[:HID_PACKET_SIZE]
+                        frame = frame[HID_PACKET_SIZE:]
 
-                            # Data must always be prepended with Report ID (0)
-                            chunk = b'\x00' + chunk
+                        # Ensure exactly 64 bytes by padding if necessary
+                        if len(chunk) < HID_PACKET_SIZE:
+                            chunk = chunk.ljust(HID_PACKET_SIZE, b'\x00')
 
-                            print(f"{dt} [To HIDRAW] (length: {len(chunk)})")
-                            print(format_bytes_verbose(chunk, prefix="  "))
+                        # Data must always be prepended with Report ID (0)
+                        chunk = b'\x00' + chunk
 
-                            hiddev.write(chunk)
+                        print(f"{dt} [To HID-FIDO] (length: {len(chunk)})")
+                        print(format_bytes_verbose(chunk, prefix="  "))
+
+                        try:
+                            hid_write_queue.put(chunk, timeout=0.1)
+                        except queue.Full:
+                            print("HID queue full, dropping frame.")
+                            break
 
         except KeyboardInterrupt:
-            print("Exiting...")
-            hiddev.close()
-            udp_sock.close()
-            sys.exit(1)
+            stop_event.set() 
+
         except Exception as e:
             print(f"Error: {e}")
-            hiddev.close()
-            udp_sock.close()
-            sys.exit(1)
+            stop_event.set()
+
+    print("Stopping...")
+    stop_event.set()
+    hid_write_queue.put(None)
+    hiddev.close()
+    udp_sock.close()
+    sys.exit(0)
 
 if __name__ == "__main__":
     main()
