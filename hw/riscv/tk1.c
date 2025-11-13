@@ -29,6 +29,7 @@
 #include "sysemu/reset.h"
 #include "sysemu/sysemu.h"
 #include "sysemu/runstate.h"
+#include "ui/console.h"
 #include "hw/riscv/tillitis_cpu.h"
 #include "hw/char/riscv_htif.h"
 #include "qapi/qmp/qerror.h"
@@ -186,7 +187,9 @@ static void tk1_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned siz
         return;
 
     case TK1_MMIO_TOUCH_STATUS:
-        // Always touched, we don't care about touch reset
+        if (s->touch_sim_enabled) {
+            s->touch_event = false;
+        }
         return;
 
     case TK1_MMIO_TK1_SWITCH_APP:
@@ -401,8 +404,10 @@ static uint64_t tk1_mmio_read(void *opaque, hwaddr addr, unsigned size)
         break;
 
     case TK1_MMIO_TOUCH_STATUS:
-        // Always touched
-        return 1 << TK1_MMIO_TOUCH_STATUS_EVENT_BIT;
+        if (!s->touch_sim_enabled || s->touch_event) {
+            return 1 << TK1_MMIO_TOUCH_STATUS_EVENT_BIT;
+        }
+        return 0;
 
     case TK1_MMIO_TK1_NAME0:
         return 0x746b3120; // "tk1 "
@@ -458,6 +463,16 @@ static void tk1_timer_tick(void *opaque)
     } else {
         // Schedule next tick
         timer_mod(s->qtimer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + s->timer_interval);
+    }
+}
+
+static void tk1_kbd_event_handler(void *opaque, int keycode)
+{
+    TK1State *s = (TK1State *) opaque;
+
+    bool is_keydown_event = (keycode & 0x80) == 0;
+    if (is_keydown_event) {
+        s->touch_event = true;
     }
 }
 
@@ -521,6 +536,13 @@ static void tk1_board_init(MachineState *machine)
 
     // The TK1 timer. Every tick we call tk1_timer_tick().
     s->qtimer = timer_new_ns(QEMU_CLOCK_VIRTUAL, tk1_timer_tick, s);
+
+    if (s->touch_sim_enabled) {
+        if (!qemu_add_kbd_event_handler(tk1_kbd_event_handler, s)) {
+            error_report("Could not add kbd event handler");
+            exit(EXIT_FAILURE);
+        }
+    }
 
     if (!tk1_setup_chardev(s, &err)) {
         error_report_err(err);
@@ -629,6 +651,14 @@ static void tk1_machine_set_htif_enabled(Object *obj,
     s->htif_enabled = value;
 }
 
+static void tk1_machine_set_touch_sim_enabled(Object *obj,
+                                    const bool value, Error **errp)
+{
+    TK1State *s = TK1_MACHINE(obj);
+
+    s->touch_sim_enabled = value;
+}
+
 static void tk1_machine_instance_finalize(Object *obj)
 {
     TK1State *s = TK1_MACHINE(obj);
@@ -662,6 +692,9 @@ static void tk1_machine_class_init(ObjectClass *oc, void *data)
     object_class_property_add_bool(oc, "htif",
                                    NULL,
                                    tk1_machine_set_htif_enabled);
+    object_class_property_add_bool(oc, "touch",
+                                   NULL,
+                                   tk1_machine_set_touch_sim_enabled);
 }
 
 static void tk1_castor_machine_class_init(ObjectClass *oc, void *data)

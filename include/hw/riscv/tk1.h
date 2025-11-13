@@ -53,6 +53,7 @@ typedef struct TK1State {
     uint8_t fifo_rx[TK1_RX_FIFO_SIZE];
     uint8_t fifo_rx_len;
     bool htif_enabled;
+    bool touch_sim_enabled;
     bool app_mode;
     uint32_t app_addr;
     uint32_t app_size;
@@ -69,6 +70,7 @@ typedef struct TK1State {
     bool timer_running;
     uint32_t timer_interval;
     TK1SPIState spi;
+    bool touch_event;
 } TK1State;
 
 struct TK1MachineClass {
