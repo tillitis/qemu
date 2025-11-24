@@ -54,6 +54,9 @@ def hid_reader(hiddev, udp_sock, udp_dest, args):
             if not frame:
                 continue
 
+            if args.no_header:
+                frame = frame[2:]
+
             udp_sock.sendto(frame, udp_dest)
 
             if args.verbose:
@@ -91,11 +94,15 @@ def hid_writer(dev):
         # HID write interval pacing
         time.sleep(0.002)
 
-def recv_framed_udp(sock):
+def recv_framed_udp(sock, args):
     try:
         data, addr = sock.recvfrom(2048)
         if len(data) < 2:
             return None, addr
+
+        if args.no_header:
+            return data, addr
+
         length = data[1]
         expected = 2 + length
         if len(data) < expected:
@@ -114,6 +121,7 @@ def main():
     parser.add_argument("--dest-port", type=int, help="Destination UDP port")
     parser.add_argument("--listen-ip", help="IP address to listen on")
     parser.add_argument("--listen-port", type=int, help="UDP port to listen on")
+    parser.add_argument("--no-header", action="store_true", help="Remove USB header before sending over UDP")
     parser.add_argument("--verbose", action="store_true", help="Print hex dumps of forwarded data")
     args = parser.parse_args()
 
@@ -178,7 +186,7 @@ def main():
 
             for fd in r_ready:
                 if fd == udp_sock:
-                    frame, addr = recv_framed_udp(fd)
+                    frame, addr = recv_framed_udp(fd, args)
                     if not frame:
                         continue
 
@@ -186,6 +194,11 @@ def main():
                     if args.verbose:
                         print(f"{dt} [UDP {addr} -> TKEY] (length: {len(frame)})")
                         print(format_bytes_verbose(frame, prefix="  "))
+
+                    if args.no_header:
+                        # pre-pend header, needed by loopback app.
+                        # Assume a full frame
+                        frame = b'\x10\x40' + frame
 
                     while len(frame) > 0:
                         # Take up to 64 bytes from the frame
