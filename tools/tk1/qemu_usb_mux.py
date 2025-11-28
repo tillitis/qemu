@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import atexit
 import fcntl
 import os
 import pty
@@ -67,7 +68,9 @@ def main():
         if args.verbose or not args.symlink:
             print(f"{name} PTY created at: {path}")
         if args.symlink:
-            os.symlink(path, f"{args.symlink}-{name}.pty")
+            linkname = f"{args.symlink}-{name}.pty"
+            os.symlink(path, linkname)
+            atexit.register(os.remove, linkname)
         frame_fds[code] = fd
         fd_to_frame[fd] = code
 
