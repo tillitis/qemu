@@ -374,7 +374,11 @@ static uint64_t tk1_mmio_read(void *opaque, hwaddr addr, unsigned size)
         return entropy;
 
     case TK1_MMIO_TIMER_TIMER: // u32
-        return s->timer;
+        if (!s->timer_running) {
+            return s->timer_initial;
+        } else {
+            return s->timer;
+        }
     case TK1_MMIO_TIMER_PRESCALER:
         return s->timer_prescaler;
     case TK1_MMIO_TIMER_STATUS:
