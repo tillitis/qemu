@@ -32,7 +32,11 @@
 #define TK1_RX_FIFO_SIZE 16
 #define TK1_SPI_BASE TK1_MMIO_TK1_SPI_EN
 #define TK1_BELLATRIX_FW_RAM_SIZE 0x800
+#define TK1_BELLATRIX_MMIO_UDS_FIRST 0xc2000040
+#define TK1_BELLATRIX_MMIO_UDS_LAST 0xc200005c
 #define TK1_CASTOR_FW_RAM_SIZE 0x1000
+#define TK1_CASTOR_MMIO_UDS_FIRST 0xc2000000
+#define TK1_CASTOR_MMIO_UDS_LAST 0xc200001c
 #define TK1_IRQ_HANDLER_ADDRESS 0x10
 #define TK1_SYSCALL_IRQ_MASK (1 << 31)
 #define TK1_MMIO_SYSCALL 0xe1000000
@@ -81,6 +85,8 @@ struct TK1MachineClass {
     bool has_syscall;
     bool has_system_reset;
     uint32_t fw_ram_size;
+    hwaddr mmio_uds_first_addr;
+    hwaddr mmio_uds_last_addr;
     uint32_t version;
 };
 

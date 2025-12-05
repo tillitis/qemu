@@ -160,7 +160,7 @@ static void tk1_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned siz
     }
 
     // Handle some read-only addresses first
-    if (addr >= TK1_MMIO_UDS_FIRST && addr <= TK1_MMIO_UDS_LAST) {
+    if (addr >= tmc->mmio_uds_first_addr && addr <= tmc->mmio_uds_last_addr) {
         badmsg = "write to UDS";
         goto bad;
     }
@@ -336,12 +336,12 @@ static uint64_t tk1_mmio_read(void *opaque, hwaddr addr, unsigned size)
     // read-once implementation is word-based (4 bytes), it is in practice not
     // possible to read all 4 bytes of a word -- the 3 last bytes read would
     // just be zeros. Therefore we only implement word-reading here.
-    if (addr >= TK1_MMIO_UDS_FIRST && addr <= TK1_MMIO_UDS_LAST) {
+    if (addr >= tmc->mmio_uds_first_addr && addr <= tmc->mmio_uds_last_addr) {
         if (s->app_mode) {
             badmsg = "read from UDS in app-mode";
             goto bad;
         }
-        int i = (addr - TK1_MMIO_UDS_FIRST) / 4;
+        int i = (addr - tmc->mmio_uds_first_addr) / 4;
         // Should only be read once
         if (s->block_uds[i]) {
             badmsg = "read from UDS twice";
@@ -685,6 +685,8 @@ static void tk1_machine_class_init(ObjectClass *oc, void *data)
     tmc->has_syscall = false;
     tmc->has_system_reset = false;
     tmc->fw_ram_size = TK1_BELLATRIX_FW_RAM_SIZE;
+    tmc->mmio_uds_first_addr = TK1_BELLATRIX_MMIO_UDS_FIRST;
+    tmc->mmio_uds_last_addr = TK1_BELLATRIX_MMIO_UDS_LAST;
     tmc->version = 1;
 
     object_class_property_add_str(oc, "fifo",
@@ -709,6 +711,8 @@ static void tk1_castor_machine_class_init(ObjectClass *oc, void *data)
     tmc->has_syscall = true;
     tmc->has_system_reset = true;
     tmc->fw_ram_size = TK1_CASTOR_FW_RAM_SIZE;
+    tmc->mmio_uds_first_addr = TK1_CASTOR_MMIO_UDS_FIRST;
+    tmc->mmio_uds_last_addr = TK1_CASTOR_MMIO_UDS_LAST;
     tmc->version = 6;
 }
 
