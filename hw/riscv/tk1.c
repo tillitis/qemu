@@ -230,19 +230,18 @@ static void tk1_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned siz
             break;
         }
         s->timer_initial = val;
-        s->timer = val;
         return;
     case TK1_MMIO_TIMER_CTRL:
         if (s->timer_running) {
             if (val & (1 << TK1_MMIO_TIMER_CTRL_STOP_BIT)) {
-                // Stop. Reset to initial value.
+                // Stop.
                 s->timer_running = false;
-                s->timer = s->timer_initial;
             }
             // Start timer when already running does nothing
         } else {
             if (val & (1 << TK1_MMIO_TIMER_CTRL_START_BIT)) {
-                // Start and schedule next tick
+                // Start, set timer to initial value and schedule next tick
+                s->timer = s->timer_initial;
                 s->timer_running = true;
                 timer_mod(s->qtimer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + s->timer_interval);
             }
