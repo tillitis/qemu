@@ -75,6 +75,10 @@ typedef struct TK1State {
     uint32_t timer_interval;
     TK1SPIState spi;
     bool touch_event;
+    uint32_t udi_vid;
+    uint32_t udi_pid;
+    uint32_t udi_rev;
+    uint32_t udi_serial;
 } TK1State;
 
 struct TK1MachineClass {
@@ -88,6 +92,10 @@ struct TK1MachineClass {
     hwaddr mmio_uds_first_addr;
     hwaddr mmio_uds_last_addr;
     uint32_t version;
+    uint32_t udi_vid;
+    uint32_t udi_pid;
+    uint32_t udi_rev;
+    uint32_t udi_serial;
 };
 
 #define TYPE_TK1_MACHINE MACHINE_TYPE_NAME("tk1")

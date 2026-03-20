@@ -35,6 +35,7 @@
 #include "qapi/qmp/qerror.h"
 #include "qemu/log.h"
 #include "qemu/guest-random.h"
+#include "qapi/qapi-visit-common.h"
 
 static const MemMapEntry tk1_memmap[] = {
     // TODO js said that currently ROM size is 2048 W32, and max is 3072 W32
@@ -481,6 +482,8 @@ static void tk1_kbd_event_handler(void *opaque, int keycode)
 
 static void tk1_reset(MachineState *machine, ShutdownCause reason)
 {
+    MachineClass *mc = MACHINE_GET_CLASS(machine);
+    TK1MachineClass *tmc = TK1_MACHINE_CLASS(mc);
     TK1State *s = TK1_MACHINE(machine);
 
     s->timer_initial = 0;
@@ -507,11 +510,16 @@ static void tk1_reset(MachineState *machine, ShutdownCause reason)
         s->block_uds[i] = false;
     }
 
-    uint32_t udi[2] = {
-        0x00010203,
-        0x04050607
-    };
-    memcpy(s->udi, udi, 8);
+    uint32_t udi_vid = s->udi_vid == -1 ? tmc->udi_vid : s->udi_vid;
+    uint32_t udi_pid = s->udi_pid == -1 ? tmc->udi_pid : s->udi_pid;
+    uint32_t udi_rev = s->udi_rev == -1 ? tmc->udi_rev : s->udi_rev;
+    uint32_t udi_serial = s->udi_serial == -1 ? tmc->udi_serial : s->udi_serial;
+
+    s->udi[0] = 0;
+    s->udi[0] |= ((udi_vid & 0xffff) << 12);
+    s->udi[0] |= ((udi_pid & 0x3f) << 6);
+    s->udi[0] |= udi_rev & 0x3f;
+    s->udi[1] = udi_serial;
 
     for (int i = 0; i < 32; i ++) {
         s->cdi[i] = 0;
@@ -622,6 +630,12 @@ static void tk1_board_init(MachineState *machine)
 
 static void tk1_machine_instance_init(Object *obj)
 {
+    TK1State *s = TK1_MACHINE(obj);
+
+    s->udi_vid = -1;
+    s->udi_pid = -1;
+    s->udi_rev = -1;
+    s->udi_serial = -1;
 }
 
 static void tk1_machine_set_chardev(Object *obj,
@@ -661,6 +675,38 @@ static void tk1_machine_set_touch_sim_enabled(Object *obj,
     s->touch_sim_enabled = value;
 }
 
+static void tk1_machine_set_udi_vid(Object *obj, Visitor *v,
+                                    const char *name, void *opaque, Error **errp)
+{
+    TK1State *s = TK1_MACHINE(obj);
+
+    visit_type_uint32(v, name, &s->udi_vid, errp);
+}
+
+static void tk1_machine_set_udi_pid(Object *obj, Visitor *v,
+                                    const char *name, void *opaque, Error **errp)
+{
+    TK1State *s = TK1_MACHINE(obj);
+
+    visit_type_uint32(v, name, &s->udi_pid, errp);
+}
+
+static void tk1_machine_set_udi_rev(Object *obj, Visitor *v,
+                                    const char *name, void *opaque, Error **errp)
+{
+    TK1State *s = TK1_MACHINE(obj);
+
+    visit_type_uint32(v, name, &s->udi_rev, errp);
+}
+
+static void tk1_machine_set_udi_serial(Object *obj, Visitor *v,
+                                    const char *name, void *opaque, Error **errp)
+{
+    TK1State *s = TK1_MACHINE(obj);
+
+    visit_type_uint32(v, name, &s->udi_serial, errp);
+}
+
 static void tk1_machine_instance_finalize(Object *obj)
 {
     TK1State *s = TK1_MACHINE(obj);
@@ -688,6 +734,10 @@ static void tk1_machine_class_init(ObjectClass *oc, void *data)
     tmc->mmio_uds_first_addr = TK1_BELLATRIX_MMIO_UDS_FIRST;
     tmc->mmio_uds_last_addr = TK1_BELLATRIX_MMIO_UDS_LAST;
     tmc->version = 1;
+    tmc->udi_vid = 0x1337;
+    tmc->udi_pid = 0x2;
+    tmc->udi_rev = 0x2;
+    tmc->udi_serial = 0x04050607;
 
     object_class_property_add_str(oc, "fifo",
                                   tk1_machine_get_chardev,
@@ -699,6 +749,26 @@ static void tk1_machine_class_init(ObjectClass *oc, void *data)
     object_class_property_add_bool(oc, "touch",
                                    NULL,
                                    tk1_machine_set_touch_sim_enabled);
+
+    object_class_property_add(oc, "udi-vid", "uint32_t",
+                              NULL, tk1_machine_set_udi_vid, NULL, NULL);
+    object_class_property_set_description(oc, "udi-vid",
+                                          "Override default UDI vendor id field");
+
+    object_class_property_add(oc, "udi-pid", "uint32_t",
+                              NULL, tk1_machine_set_udi_pid, NULL, NULL);
+    object_class_property_set_description(oc, "udi-pid",
+                                          "Override default UDI product id field");
+
+    object_class_property_add(oc, "udi-rev", "uint32_t",
+                              NULL, tk1_machine_set_udi_rev, NULL, NULL);
+    object_class_property_set_description(oc, "udi-rev",
+                                          "Override default UDI product revision field");
+
+    object_class_property_add(oc, "udi-serial", "uint32_t",
+                              NULL, tk1_machine_set_udi_serial, NULL, NULL);
+    object_class_property_set_description(oc, "udi-serial",
+                                          "Override default UDI serial number field");
 }
 
 static void tk1_castor_machine_class_init(ObjectClass *oc, void *data)
@@ -714,6 +784,10 @@ static void tk1_castor_machine_class_init(ObjectClass *oc, void *data)
     tmc->mmio_uds_first_addr = TK1_CASTOR_MMIO_UDS_FIRST;
     tmc->mmio_uds_last_addr = TK1_CASTOR_MMIO_UDS_LAST;
     tmc->version = 6;
+    tmc->udi_vid = 0x1337;
+    tmc->udi_pid = 0x3;
+    tmc->udi_rev = 0x0;
+    tmc->udi_serial = 0x04050607;
 }
 
 static const TypeInfo tk1_machine_types[] = {
