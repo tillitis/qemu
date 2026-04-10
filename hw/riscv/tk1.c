@@ -733,7 +733,7 @@ static void tk1_machine_class_init(ObjectClass *oc, void *data)
     tmc->fw_ram_size = TK1_BELLATRIX_FW_RAM_SIZE;
     tmc->mmio_uds_first_addr = TK1_BELLATRIX_MMIO_UDS_FIRST;
     tmc->mmio_uds_last_addr = TK1_BELLATRIX_MMIO_UDS_LAST;
-    tmc->version = 1;
+    tmc->version = 5;
     tmc->udi_vid = 0x1337;
     tmc->udi_pid = 0x2;
     tmc->udi_rev = 0x2;
