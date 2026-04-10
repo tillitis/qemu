@@ -418,7 +418,7 @@ static uint64_t tk1_mmio_read(void *opaque, hwaddr addr, unsigned size)
     case TK1_MMIO_TK1_NAME1:
         return 0x6d6b6466; // "mkdf"
     case TK1_MMIO_TK1_VERSION:
-        return tmc->version;
+        return s->version;
     case TK1_MMIO_TK1_SWITCH_APP:
         if (s->app_mode) {
             return 0xffffffff;
@@ -520,6 +520,8 @@ static void tk1_reset(MachineState *machine, ShutdownCause reason)
     s->udi[0] |= ((udi_pid & 0x3f) << 6);
     s->udi[0] |= udi_rev & 0x3f;
     s->udi[1] = udi_serial;
+
+    s->version = s->version == -1 ? tmc->version : s->version;
 
     for (int i = 0; i < 32; i ++) {
         s->cdi[i] = 0;
@@ -636,6 +638,7 @@ static void tk1_machine_instance_init(Object *obj)
     s->udi_pid = -1;
     s->udi_rev = -1;
     s->udi_serial = -1;
+    s->version = -1;
 }
 
 static void tk1_machine_set_chardev(Object *obj,
@@ -707,6 +710,14 @@ static void tk1_machine_set_udi_serial(Object *obj, Visitor *v,
     visit_type_uint32(v, name, &s->udi_serial, errp);
 }
 
+static void tk1_machine_set_version(Object *obj, Visitor *v,
+                                    const char *name, void *opaque, Error **errp)
+{
+    TK1State *s = TK1_MACHINE(obj);
+
+    visit_type_uint32(v, name, &s->version, errp);
+}
+
 static void tk1_machine_instance_finalize(Object *obj)
 {
     TK1State *s = TK1_MACHINE(obj);
@@ -746,6 +757,12 @@ static void tk1_machine_class_init(ObjectClass *oc, void *data)
     object_class_property_add_bool(oc, "htif",
                                    NULL,
                                    tk1_machine_set_htif_enabled);
+
+    object_class_property_add(oc, "hw-version", "uint32_t",
+                              NULL, tk1_machine_set_version, NULL, NULL);
+    object_class_property_set_description(oc, "hw-version",
+                                          "Override default TK1_MMIO_TK1_VERSION content");
+
     object_class_property_add_bool(oc, "touch",
                                    NULL,
                                    tk1_machine_set_touch_sim_enabled);

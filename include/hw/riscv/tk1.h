@@ -79,6 +79,7 @@ typedef struct TK1State {
     uint32_t udi_pid;
     uint32_t udi_rev;
     uint32_t udi_serial;
+    uint32_t version;
 } TK1State;
 
 struct TK1MachineClass {
@@ -91,11 +92,11 @@ struct TK1MachineClass {
     uint32_t fw_ram_size;
     hwaddr mmio_uds_first_addr;
     hwaddr mmio_uds_last_addr;
-    uint32_t version;
     uint32_t udi_vid;
     uint32_t udi_pid;
     uint32_t udi_rev;
     uint32_t udi_serial;
+    uint32_t version;
 };
 
 #define TYPE_TK1_MACHINE MACHINE_TYPE_NAME("tk1")
